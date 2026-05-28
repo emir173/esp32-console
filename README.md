@@ -64,10 +64,7 @@ Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi
 
 ---
 
-## 📸 Proje Sunumu
-Tasarımın, oyunların ve donanım arayüzünün (ayarlar, oyun sonu animasyonları vb.) tamamını detaylı bir dijital katalog şeklinde incelemek isterseniz, repo içindeki `docs/index.html` dosyasını tarayıcınızda açabilirsiniz!
-
-### 💻 Nasıl Derlenir?
+## 💻 Nasıl Derlenir?
 Bu proje **Arduino IDE / PlatformIO** kullanılarak derlenebilir. Gerekli kütüphaneler:
 - `TFT_eSPI` (Ekran Sürücüsü)
 - `Adafruit_GFX` ve `Adafruit_SH110X` (OLED Sürücüsü)
