@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-OS V2.1 Konsolu</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #09090b;
+            --surface: #18181b;
+            --border: #27272a;
+            --text-main: #f8fafc;
+            --text-muted: #a1a1aa;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* --- TYPOGRAPHY --- */
+        h1, h2, h3 { font-weight: 800; letter-spacing: -0.03em; line-height: 1.2; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .text-gradient {
+            background: linear-gradient(135deg, #fff 0%, #a1a1aa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* --- LAYOUT --- */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        .section {
+            padding: 80px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 6px 16px;
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 100px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* --- FEATURE SPLIT --- */
+        .feature-split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+        }
+        .feature-split.reverse {
+            direction: rtl;
+        }
+        .feature-split.reverse > * {
+            direction: ltr;
+        }
+        .feature-text h2 {
+            font-size: 2.5rem;
+            margin-bottom: 24px;
+        }
+        .feature-text p {
+            font-size: 1.125rem;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+        .feature-media {
+            border-radius: 24px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: var(--surface);
+        }
+        .feature-media img, .feature-media video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* --- GRID GALLERY --- */
+        .games-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-top: 48px;
+        }
+        .game-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+        .game-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--text-muted);
+        }
+        .game-card img, .game-card video {
+            width: 100%;
+            height: 250px;
+            object-fit: contain;
+            background: #000;
+            border-bottom: 1px solid var(--border);
+            display: block;
+        }
+        .game-card-content {
+            padding: 24px;
+        }
+        .game-card-content h3 {
+            font-size: 1.25rem;
+            margin-bottom: 8px;
+        }
+        .game-card-content p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* --- SPECS SECTION --- */
+        .specs-container {
+            background: var(--surface);
+            border-radius: 24px;
+            border: 1px solid var(--border);
+            padding: 48px;
+            margin-top: 48px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 30px;
+        }
+        .spec-item h4 {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+        .spec-item p {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .feature-split { grid-template-columns: 1fr; gap: 32px; }
+            .section { padding: 60px 0; }
+            .specs-container { padding: 32px; gap: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- HEADER / INTRODUCTION -->
+    <header class="container" style="padding-top: 100px; padding-bottom: 20px; text-align: center; max-width: 900px;">
+        <div class="badge mono">E-OS V2.1 Konsolu</div>
+        <h1 class="text-gradient" style="font-size: clamp(2.5rem, 5vw, 4.5rem); margin-bottom: 24px;">Sınırları Zorlayan Güç.</h1>
+        <p style="font-size: 1.25rem; color: var(--text-muted);">ESP32-S3 mimarisi üzerinde sıfırdan yazılmış E-OS işletim sistemi. Çift ekran, 6 tam ekran oyun ve muazzam bir akıcılık.</p>
+    </header>
+
+    <!-- HARDWARE -->
+    <section class="section container">
+        <div class="feature-split">
+            <div class="feature-text">
+                <h2>Donanım Mimarisi</h2>
+                <p>Cihazın kalbinde 240 MHz hızında çalışan çift çekirdekli ESP32-S3 bulunuyor. 16MB Flash ve 8MB PSRAM OPI ile bellek darboğazı tamamen ortadan kaldırıldı.</p>
+                <p>Ana sahnede aksiyonun aktığı 160x128 Renkli TFT (SPI) ekran varken, cihazın tepesindeki 128x64 OLED (I2C) ekran ise donanım bilgisi, taktiksel oyun istatistikleri ve logolar için ekstra bir panel görevi görüyor.</p>
+            </div>
+            <div class="feature-media">
+                <img src="images/cihaz 2.jpg" alt="Çift Ekranlı Donanım">
+            </div>
+        </div>
+
+        <div class="specs-container mono">
+            <div class="spec-item">
+                <h4>İşlemci</h4>
+                <p>Dual-Core 240 MHz</p>
+            </div>
+            <div class="spec-item">
+                <h4>Bellek</h4>
+                <p>16MB Flash + 8MB PSRAM</p>
+            </div>
+            <div class="spec-item">
+                <h4>Depolama</h4>
+                <p>Micro SD Kart</p>
+            </div>
+            <div class="spec-item">
+                <h4>Ses</h4>
+                <p>8-bit Akustik Buzzer</p>
+            </div>
+            <div class="spec-item">
+                <h4>Framerate</h4>
+                <p>+60 FPS</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SOFTWARE & UI -->
+    <section class="section container">
+        <div class="feature-split reverse">
+            <div class="feature-text">
+                <h2>Sıfırdan Yazılmış İşletim Sistemi</h2>
+                <p>Hazır bir arayüz kütüphanesi kullanılmadı. E-OS, cihazın donanımına tam entegre çalışır. Menüler arası geçişlerde kullanılan "Double-buffered UI" tekniği sayesinde ekranda en ufak bir yırtılma (screen-tear) yaşanmaz.</p>
+                <p>Sistem açıldığında donanımı denetler, pürüzsüz animasyonlarla ana menüye geçer ve oyunları saniyeler içinde yükler.</p>
+            </div>
+            <div class="feature-media">
+                <video autoplay loop muted playsinline style="width: 100%;">
+                    <source src="images/loading.mp4" type="video/mp4">
+                </video>
+            </div>
+        </div>
+    </section>
+
+    <!-- UI DETAILS GALLERY -->
+    <section class="section container" style="padding-top: 0; border-bottom: none;">
+        <div class="games-grid" style="grid-template-columns: repeat(3, 1fr); margin-top: 0;">
+            <div class="game-card">
+                <video autoplay loop muted playsinline>
+                    <source src="images/main menu.mp4" type="video/mp4">
+                </video>
+                <div class="game-card-content">
+                    <h3>Akıcı Ana Menü</h3>
+                    <p>Tüm oyunlara anında erişim sağlayan carousel (dönen) menü tasarımı.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/settings.jpg" alt="Ayarlar">
+                <div class="game-card-content">
+                    <h3>Sistem Ayarları</h3>
+                    <p>Ses, parlaklık ve sistem bilgilerini yönetebildiğiniz kontrol paneli.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/bilgi.jpg" alt="Bilgi Ekranı">
+                <div class="game-card-content">
+                    <h3>Donanım Bilgisi</h3>
+                    <p>OLED ekranda flash bellek bilgisi ve oyunlardaki en yüksek skoru (High Score) gösterir.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- THE GAMES LIBRARY -->
+    <section class="section container">
+        <div style="text-align: center; margin-bottom: 64px;">
+            <div class="badge mono">Oyun Kütüphanesi</div>
+            <h2>Özel Kodlanmış 6 Efsane Oyun</h2>
+            <p style="color: var(--text-muted); max-width: 600px; margin: 16px auto 0;">Oyunlar basit birer port değil; ekran çözünürlüğüne ve kontrol şemasına göre satır satır yeniden yazıldı. Hepsinde donanım seviyesinde çalışan ortak Pause sistemi mevcuttur.</p>
+        </div>
+
+        <div class="games-grid">
+            <!-- DOOM -->
+            <div class="game-card">
+                <img src="images/doom1.jpg" alt="Doom Gameplay 1">
+                <div class="game-card-content">
+                    <h3>DOOM (3D Raycasting)</h3>
+                    <p>Gerçek zamanlı 3D ortamlar, silah mekanikleri ve düşman yapay zekası 100+ FPS hızında TFT ekrana akıyor.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/doom2.jpg" alt="Doom Gameplay 2">
+                <div class="game-card-content">
+                    <h3>DOOM Oynanış</h3>
+                    <p>Oyun içi koridorlardan ve düşman aksiyonundan diğer bir kare.</p>
+                </div>
+            </div>
+
+            <!-- SPACE INVADERS -->
+            <div class="game-card">
+                <img src="images/space.jpg" alt="Space Invaders">
+                <div class="game-card-content">
+                    <h3>Space Invaders</h3>
+                    <p>Uzaylı istilası! Akıcı gemi mekanikleri ve partikül efektleriyle baştan yaratılan klasik.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/space2.jpg" alt="Space Invaders 2">
+                <div class="game-card-content">
+                    <h3>Space Invaders Oynanış</h3>
+                    <p>Dalga dalga gelen uzaylıları yok etmeye devam edin.</p>
+                </div>
+            </div>
+
+            <!-- ARKANOID -->
+            <div class="game-card">
+                <img src="images/arkanoid1.jpg" alt="Arkanoid">
+                <div class="game-card-content">
+                    <h3>Arkanoid (Breakout)</h3>
+                    <p>Analog joystick'in hassasiyetiyle platformu kusursuz kontrol edin. Fizik motoruyla tuğlaları kırın.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/arkanoid2.jpg" alt="Arkanoid 2">
+                <div class="game-card-content">
+                    <h3>Arkanoid Oynanış</h3>
+                    <p>Zorlaşan tuğla dizilimlerini kırmaya devam edin.</p>
+                </div>
+            </div>
+
+            <!-- PACMAN & OTHERS -->
+            <div class="game-card">
+                <img src="images/pacman.jpg" alt="Pacman">
+                <div class="game-card-content">
+                    <h3>Pac-Man</h3>
+                    <p>Klasik labirent deneyimi. Hayalet yapay zekası tamamen cihaza uygun yeniden uyarlandı.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/flappy1.jpg" alt="Flappy Bird">
+                <div class="game-card-content">
+                    <h3>Flappy Bird</h3>
+                    <p>Milisaniyelik tepki süresi isteyen, sinir bozucu ama bir o kadar bağımlılık yapıcı efsane.</p>
+                </div>
+            </div>
+            <div class="game-card">
+                <img src="images/snake.jpg" alt="Snake">
+                <div class="game-card-content">
+                    <h3>Snake</h3>
+                    <p>Hızlanan mekanikleri ve akıcı köşeleriyle modernleştirilmiş klasik yılan oyunu.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- IN-GAME FEATURES -->
+    <section class="section container" style="border-bottom: none;">
+        <div class="feature-split">
+            <div class="feature-text">
+                <h2>Oyun İçi Özellikler</h2>
+                <p>E-OS, oyun oynarken sizi asla yarı yolda bırakmaz.</p>
+                <ul style="list-style-position: inside; color: var(--text-muted); font-size: 1.125rem;">
+                    <li style="margin-bottom: 12px;"><strong>Donanımsal Pause (Duraklatma):</strong> Hangi oyunda olursanız olun, Joystick butonuna bastığınızda RTOS çekirdekleri güvenle askıya alınır.</li>
+                    <li style="margin-bottom: 12px;"><strong>Game Over Animasyonları:</strong> Her oyun, kendine has dramatik "Game Over" ekranlarıyla donatıldı.</li>
+                    <li><strong>Flashing & Yükleme:</strong> Oyunlar arası geçişler (OTA konseptiyle) hızlı ve pürüzsüz.</li>
+                </ul>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <img src="images/pause.jpg" alt="Pause" style="width: 100%; border-radius: 12px; border: 1px solid var(--border);">
+                <img src="images/game over.jpg" alt="Game Over" style="width: 100%; border-radius: 12px; border: 1px solid var(--border);">
+                <img src="images/flashing.jpg" alt="Flashing Yükleme" style="width: 100%; border-radius: 12px; border: 1px solid var(--border); grid-column: span 2; object-fit: contain; max-height: 250px; background: #000;">
+            </div>
+        </div>
+    </section>
+
+    <footer style="text-align: center; padding: 48px; border-top: 1px solid var(--border); color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">
+        E-OS V2.1 Konsol Projesi | Sıfırdan Kodlandı
+    </footer>
+
+</body>
+</html>
