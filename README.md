@@ -11,6 +11,10 @@
     <img src="https://img.shields.io/badge/RAM-8MB_PSRAM-purple?style=for-the-badge" alt="PSRAM"/>
     <img src="https://img.shields.io/badge/Flash-16MB-green?style=for-the-badge" alt="Flash"/>
   </p>
+  
+  <h3>
+    <a href="https://emir173.github.io/esp32-console/">🌐 Projenin Canlı Sunum Sitesini İnceleyin</a>
+  </h3>
 </div>
 
 ---
