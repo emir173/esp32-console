@@ -171,14 +171,25 @@
             .specs-container { 
                 padding: 24px; 
                 gap: 20px; 
+                text-align: center;
+            }
+            .feature-text {
+                text-align: center;
             }
             .feature-text h2 { 
-                font-size: 2rem; 
+                font-size: 1.8rem; 
                 margin-bottom: 16px;
             }
             .feature-text p {
                 font-size: 1rem;
                 margin-bottom: 16px;
+            }
+            .feature-text ul {
+                list-style: none; /* Centered bullets look weird, so remove them */
+                padding: 0;
+            }
+            .feature-text ul li {
+                margin-bottom: 16px !important;
             }
             header {
                 padding-top: 60px !important;
@@ -195,7 +206,11 @@
                 height: 220px; 
             }
             .game-card-content {
-                padding: 16px;
+                padding: 20px 16px;
+                text-align: center;
+            }
+            .game-card-content h3 {
+                font-size: 1.15rem;
             }
             .games-grid {
                 grid-template-columns: 1fr;
