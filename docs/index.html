@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>E-OS — El Konsolu</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='15' y='25' width='70' height='50' rx='10' fill='%2312161B' stroke='%233BD16F' stroke-width='6'/><rect x='28' y='35' width='20' height='15' fill='%233BD16F' rx='2'/><circle cx='68' cy='40' r='5' fill='%23E8A33D'/><circle cx='58' cy='55' r='5' fill='%233BD16F'/></svg>">
 <meta name="theme-color" content="#0B0E11">
@@ -787,7 +788,9 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 }
 #eosCanvas {
   width: 400px;
-  height: 320px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 160 / 128;
   background: #000;
   border: 2px solid #000;
   border-radius: 4px;
