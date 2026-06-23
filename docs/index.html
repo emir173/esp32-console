@@ -1632,6 +1632,7 @@ document.addEventListener('keydown', (e) => {
   let sel = 0;
   let animTick = 0;
   let pulseState = 0;
+  let lastInteractionTime = Date.now();
 
   function renderBootloader() {
     fillRect(0, 0, 160, 64, RGB_FIX(6, 6, 18));
@@ -1740,6 +1741,14 @@ document.addEventListener('keydown', (e) => {
   function renderMenu() {
     animTick++;
     if (animTick % 12 === 0) pulseState = (pulseState + 1) % 3;
+
+    // Otomatik kayma (her 3.5 saniyede bir)
+    if (Date.now() - lastInteractionTime > 3500) {
+        sel = (sel + 1) % games.length;
+        pulseState = 0;
+        lastInteractionTime = Date.now();
+    }
+
 
     drawCarouselFrame();
     drawCenterCard(sel);
