@@ -1,421 +1,1754 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>E-OS V2.1 Konsolu</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #09090b;
-            --surface: #18181b;
-            --border: #27272a;
-            --text-main: #f8fafc;
-            --text-muted: #a1a1aa;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-        }
+<meta charset="UTF-8">
+<title>E-OS — El Konsolu</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='15' y='25' width='70' height='50' rx='10' fill='%2312161B' stroke='%233BD16F' stroke-width='6'/><rect x='28' y='35' width='20' height='15' fill='%233BD16F' rx='2'/><circle cx='68' cy='40' r='5' fill='%23E8A33D'/><circle cx='58' cy='55' r='5' fill='%233BD16F'/></svg>">
+<meta name="theme-color" content="#0B0E11">
+<meta name="description" content="ESP32-S3 üzerinde çift ekranlı bir el konsolu — 10 oyun.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+:root {
+  --bg:        #0B0E11;
+  --panel:     #12161B;
+  --panel-2:   #181D24;
+  --line:      #232A33;
+  --line-dim:  #1A2026;
+  --trace:     #3BD16F;
+  --trace-dim: #1F6B3C;
+  --amber:     #E8A33D;
+  --amber-dim: #6B4D1D;
+  --paper:     #F0EDE4;
+  --paper-dim: #9BA3AD;
+  --red:       #E8543D;
 
-        body {
-            background-color: var(--bg);
-            color: var(--text-main);
-            font-family: 'Inter', sans-serif;
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', sans-serif;
+}
 
-        /* --- TYPOGRAPHY --- */
-        h1, h2, h3 { font-weight: 800; letter-spacing: -0.03em; line-height: 1.2; }
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        .text-gradient {
-            background: linear-gradient(135deg, #fff 0%, #a1a1aa 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
 
-        /* --- LAYOUT --- */
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px;
-        }
-        .section {
-            padding: 80px 0;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 6px 16px;
-            background: rgba(59, 130, 246, 0.1);
-            color: var(--accent);
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            border-radius: 100px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            margin-bottom: 24px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
 
-        /* --- FEATURE SPLIT --- */
-        .feature-split {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 64px;
-            align-items: center;
-        }
-        .feature-split.reverse {
-            direction: rtl;
-        }
-        .feature-split.reverse > * {
-            direction: ltr;
-        }
-        .feature-text h2 {
-            font-size: 2.5rem;
-            margin-bottom: 24px;
-        }
-        .feature-text p {
-            font-size: 1.125rem;
-            color: var(--text-muted);
-            margin-bottom: 24px;
-        }
-        .feature-media {
-            border-radius: 24px;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            background: var(--surface);
-        }
-        .feature-media img, .feature-media video {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
+/* ============ REVEAL ANIMATIONS ============ */
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.7s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reveal.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.stagger-1 { transition-delay: 0.1s; }
+.stagger-2 { transition-delay: 0.2s; }
+.stagger-3 { transition-delay: 0.3s; }
+.stagger-4 { transition-delay: 0.4s; }
 
-        /* --- GRID GALLERY --- */
-        .games-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin-top: 48px;
-        }
-        .game-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            overflow: hidden;
-            transition: transform 0.2s ease, border-color 0.2s ease;
-        }
-        .game-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--text-muted);
-        }
-        .game-card img, .game-card video {
-            width: 100%;
-            height: 250px;
-            object-fit: contain;
-            background: #000;
-            border-bottom: 1px solid var(--border);
-            display: block;
-        }
-        .game-card-content {
-            padding: 24px;
-        }
-        .game-card-content h3 {
-            font-size: 1.25rem;
-            margin-bottom: 8px;
-        }
-        .game-card-content p {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-        }
+/* ============ TYPING EFFECT ============ */
+.code-typing-container {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+.code-typing-container.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.type-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: var(--trace);
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+@keyframes blink { 50% { opacity: 0; } }
 
-        /* --- SPECS SECTION --- */
-        .specs-container {
-            background: var(--surface);
-            border-radius: 24px;
-            border: 1px solid var(--border);
-            padding: 48px;
-            margin-top: 48px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 30px;
-        }
-        .spec-item h4 {
-            color: var(--text-muted);
-            font-size: 0.875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 8px;
-        }
-        .spec-item p {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-        /* --- MOBILE OPTIMIZATIONS --- */
-        @media (max-width: 768px) {
-            .feature-split { 
-                grid-template-columns: 1fr; 
-                gap: 32px; 
-            }
-            .section { 
-                padding: 50px 0; 
-            }
-            .specs-container { 
-                padding: 24px; 
-                gap: 20px; 
-                text-align: center;
-            }
-            .feature-text {
-                text-align: center;
-            }
-            .feature-text h2 { 
-                font-size: 1.8rem; 
-                margin-bottom: 16px;
-            }
-            .feature-text p {
-                font-size: 1rem;
-                margin-bottom: 16px;
-            }
-            .feature-text ul {
-                list-style: none; /* Centered bullets look weird, so remove them */
-                padding: 0;
-            }
-            .feature-text ul li {
-                margin-bottom: 16px !important;
-            }
-            header {
-                padding-top: 60px !important;
-                padding-bottom: 10px !important;
-            }
-            header h1.text-gradient { 
-                font-size: 2.2rem !important; 
-                margin-bottom: 16px !important;
-            }
-            header p { 
-                font-size: 1.05rem !important; 
-            }
-            .game-card img, .game-card video { 
-                height: 220px; 
-            }
-            .game-card-content {
-                padding: 20px 16px;
-                text-align: center;
-            }
-            .game-card-content h3 {
-                font-size: 1.15rem;
-            }
-            .games-grid {
-                grid-template-columns: 1fr;
-                gap: 16px;
-            }
-        }
-    </style>
+html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+
+body {
+  background: var(--bg);
+  color: var(--paper);
+  font-family: var(--sans);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* Faint PCB trace grid backdrop */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--line-dim) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-dim) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+a { color: inherit; }
+
+::selection { background: var(--trace-dim); color: var(--paper); }
+
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 28px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ============ TYPE SYSTEM ============ */
+.mono { font-family: var(--mono); }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--trace);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.eyebrow::before {
+  content: '';
+  width: 8px; height: 8px;
+  background: var(--trace);
+  box-shadow: 0 0 8px var(--trace);
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+h1, h2, h3 { font-family: var(--mono); font-weight: 700; letter-spacing: -0.01em; }
+
+.section-title {
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 1.15;
+  margin-bottom: 16px;
+  color: var(--paper);
+}
+.section-sub {
+  font-family: var(--sans);
+  font-size: 16px;
+  color: var(--paper-dim);
+  max-width: 560px;
+  margin-bottom: 56px;
+}
+
+section { padding: 110px 0; position: relative; }
+
+.rule {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0;
+}
+.rule.trace {
+  border-top: 1px dashed var(--trace-dim);
+}
+
+/* ============ NAV ============ */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(11,14,17,0.88);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.nav-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 18px 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.nav-logo {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--paper);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-logo .dot { color: var(--trace); }
+.nav-links {
+  display: flex;
+  gap: 28px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--paper-dim);
+}
+.nav-links a { text-decoration: none; transition: color 0.15s; }
+.nav-links a:hover { color: var(--trace); }
+.nav-cta {
+  font-family: var(--mono);
+  font-size: 13px;
+  border: 1px solid var(--trace-dim);
+  color: var(--trace);
+  padding: 7px 14px;
+  border-radius: 3px;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.nav-cta:hover { background: var(--trace); color: var(--bg); }
+
+@media (max-width: 720px) {
+  .nav-links { display: none; }
+}
+
+/* ============ HERO ============ */
+.hero {
+  padding: 90px 0 70px;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 56px;
+  align-items: center;
+}
+@media (max-width: 880px) {
+  .hero { grid-template-columns: 1fr; padding-top: 56px; }
+}
+
+.hero-title {
+  font-size: clamp(30px, 4.8vw, 56px);
+  line-height: 1.08;
+  color: var(--paper);
+  white-space: nowrap;
+}
+.hero-title .accent { color: var(--trace); }
+.hero-desc {
+  font-family: var(--sans);
+  font-size: 17px;
+  color: var(--paper-dim);
+  margin: 22px 0 32px;
+  max-width: 480px;
+}
+.hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+.btn {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 13px 22px;
+  border-radius: 4px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s;
+}
+.btn-primary {
+  background: var(--trace);
+  color: #06120A;
+}
+.btn-primary:hover { 
+  background: #4FE585; 
+  transform: translateY(-2px); 
+  box-shadow: 0 6px 20px rgba(59, 209, 111, 0.4); 
+}
+.btn-ghost {
+  border: 1px solid var(--line);
+  color: var(--paper);
+}
+.btn-ghost:hover { 
+  border-color: var(--paper-dim); 
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+.hero-stats {
+  display: flex;
+  gap: 28px;
+  margin-top: 44px;
+  font-family: var(--mono);
+}
+.stat-num { font-size: 22px; color: var(--amber); font-weight: 700; }
+.stat-label { font-size: 11px; color: var(--paper-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+.hero-frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.hero-frame img { width: 100%; display: block; }
+.hero-frame::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 60%, rgba(11,14,17,0.5));
+  pointer-events: none;
+}
+.hero-frame-tag {
+  position: absolute;
+  bottom: 12px; left: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--paper);
+  background: rgba(11,14,17,0.7);
+  padding: 4px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  z-index: 2;
+}
+
+/* ============ SPEC STRIP ============ */
+.spec-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 70px 0;
+}
+.spec-cell {
+  padding: 20px 22px;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  transition: background 0.2s ease;
+}
+.spec-cell:hover {
+  background: #1C222A;
+}
+.spec-cell:last-child { border-right: none; }
+.spec-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--trace);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+.spec-val {
+  font-family: var(--mono);
+  font-size: clamp(12px, 1.3vw, 15px);
+  color: var(--paper);
+  font-weight: 600;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .spec-strip { grid-template-columns: repeat(2, 1fr); }
+  .spec-cell:nth-child(2) { border-right: none; }
+}
+
+/* ============ SCHEMATIC (signature element) ============ */
+.schematic-section { background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
+/* Bridge kaldirildi (Sinir cizgisi tasmis gibi gorunuyordu) */
+
+.schematic-board {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 40px;
+  margin-top: 20px;
+}
+.schematic-svg-wrap { position: relative; width: 100%; }
+.schem-node {
+  cursor: pointer;
+}
+.schem-node circle {
+  fill: var(--panel-2);
+  stroke: var(--trace-dim);
+  stroke-width: 1.5;
+  transition: all 0.2s;
+}
+.schem-node:hover circle, .schem-node.active circle {
+  fill: var(--trace);
+  stroke: var(--trace);
+}
+.schem-node text {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--paper-dim);
+  pointer-events: none;
+}
+.schem-node:hover text, .schem-node.active text { fill: var(--paper); }
+.schem-line {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  fill: none;
+  transition: stroke 0.2s;
+}
+.schem-line.active { stroke: var(--trace); }
+
+@media (max-width: 600px) {
+  .schem-node text { font-size: 13px; }
+  .schematic-board { padding: 22px 14px; }
+}
+
+.pin-readout {
+  margin-top: 28px;
+  border-top: 1px dashed var(--line);
+  padding-top: 22px;
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 18px;
+  align-items: start;
+  min-height: 70px;
+}
+.pin-readout-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--trace);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.pin-readout-val {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--paper);
+}
+.pin-readout-val .pin-detail { color: var(--paper-dim); font-size: 12.5px; display: block; margin-top: 4px; }
+
+.schem-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--paper-dim);
+  margin-top: 14px;
+  text-align: center;
+}
+
+/* ============ ARCHITECTURE DIAGRAM ============ */
+.arch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.arch-cell {
+  background: var(--panel);
+  padding: 28px 26px;
+  transition: background 0.2s ease;
+}
+.arch-cell:hover {
+  background: #1C222A;
+}
+.arch-core-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+.arch-task {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--paper);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-dim);
+  display: flex;
+  justify-content: space-between;
+}
+.arch-task:last-child { border-bottom: none; }
+.arch-task .pri { color: var(--paper-dim); font-size: 12px; }
+@media (max-width: 720px) {
+  .arch-grid { grid-template-columns: 1fr; }
+}
+
+/* ============ GAMES ============ */
+.game-list { display: flex; flex-direction: column; }
+.game-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 32px;
+  padding: 32px 24px;
+  margin: 0 -24px;
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+  transition: all 0.25s ease;
+  border-radius: 12px;
+}
+.game-row:hover {
+  background: var(--panel);
+  transform: scale(1.01) translateX(4px);
+  border-color: transparent;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+  z-index: 2;
+  position: relative;
+}
+.game-row:first-child { border-top: 1px solid var(--line); }
+.game-row:first-child:hover { border-top-color: transparent; }
+@media (max-width: 780px) {
+  .game-row { grid-template-columns: 1fr; gap: 14px; }
+}
+.game-idx {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--trace-dim);
+}
+.game-name {
+  font-family: var(--mono);
+  font-size: 19px;
+  color: var(--paper);
+  margin-bottom: 6px;
+}
+.game-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 3px;
+  margin-right: 6px;
+  margin-top: 8px;
+}
+.tag-new { background: var(--amber-dim); color: var(--amber); }
+.tag-core { background: var(--line); color: var(--paper-dim); }
+.game-desc {
+  font-family: var(--sans);
+  font-size: 14.5px;
+  color: var(--paper-dim);
+}
+.game-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--paper-dim);
+  text-align: right;
+}
+.game-meta .meta-line { margin-bottom: 4px; }
+.game-meta .meta-val { color: var(--trace); }
+@media (max-width: 780px) {
+  .game-meta { text-align: left; }
+}
+
+/* ============ GAME GALLERY & LIGHTBOX ============ */
+.game-content {
+  /* display: flex; flex-direction: column; kaldirildi (tag'lerin uzamasini engellemek icin) */
+  min-width: 0; /* Grid icinde tasma yapmamasi icin cok kritik! */
+}
+.game-gallery {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+.game-gallery::-webkit-scrollbar { height: 6px; }
+.game-gallery::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.game-gallery::-webkit-scrollbar-thumb:hover { background: var(--trace-dim); }
+
+.game-shot {
+  height: 90px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+  cursor: zoom-in;
+  object-fit: contain;
+  background: #000;
+  image-rendering: pixelated; /* Retro gorunum */
+}
+.game-shot:hover {
+  transform: scale(1.04);
+  border-color: var(--trace);
+}
+
+/* Lightbox */
+.lb-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--paper-dim);
+  font-size: 48px;
+  cursor: pointer;
+  padding: 20px 30px;
+  user-select: none;
+  transition: color 0.2s, transform 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.lb-nav:hover {
+  color: var(--trace);
+  transform: translateY(-50%) scale(1.15);
+}
+.lb-prev { left: 10px; }
+.lb-next { right: 10px; }
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(11,14,17,0.95);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.lightbox.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.lightbox img {
+  width: 90vw;
+  max-width: 800px;
+  height: auto;
+  border: 2px solid var(--trace);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+  transform: scale(0.95);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  image-rendering: pixelated; 
+}
+.lightbox.active img {
+  transform: scale(1);
+}
+@media (min-width: 768px) {
+  .lightbox img {
+    width: auto;
+    height: 70vh;
+  }
+}
+.lightbox-close {
+  position: absolute;
+  top: 30px;
+  right: 40px;
+  color: var(--paper-dim);
+  font-family: var(--mono);
+  font-size: 32px;
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.lightbox-close:hover { color: var(--trace); }
+
+/* ============ BUILD / OS ============ */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.feature-cell {
+  background: var(--panel);
+  padding: 30px 26px;
+  transition: background 0.2s ease;
+}
+.feature-cell:hover {
+  background: #1C222A;
+}
+.feature-icon {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--trace);
+  margin-bottom: 14px;
+}
+.feature-title {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--paper);
+  margin-bottom: 10px;
+}
+.feature-desc {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  color: var(--paper-dim);
+}
+@media (max-width: 780px) {
+  .feature-grid { grid-template-columns: 1fr; }
+}
+
+/* ============ CODE BLOCK DECOR ============ */
+.code-window {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.code-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.code-dot { width: 9px; height: 9px; border-radius: 50%; }
+.code-titlebar span {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--paper-dim);
+  margin-left: 8px;
+}
+.code-window pre {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  padding: 20px 22px;
+  overflow-x: auto;
+  color: var(--paper-dim);
+}
+.code-window .kw { color: #C792EA; }
+.code-window .fn { color: var(--trace); }
+.code-window .cm { color: #5C6370; }
+.code-window .nm { color: var(--amber); }
+.code-window .str { color: #98C379; }
+
+/* ============ ROADMAP ============ */
+.roadmap-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 24px;
+  padding: 22px 24px;
+  margin: 0 -24px;
+  border-bottom: 1px solid var(--line-dim);
+  transition: all 0.25s ease;
+  border-radius: 12px;
+}
+.roadmap-row:hover {
+  background: var(--panel);
+  transform: scale(1.01) translateX(4px);
+  border-color: transparent;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+  z-index: 2;
+  position: relative;
+}
+.roadmap-row:last-child { border-bottom: none; }
+.roadmap-row:last-child:hover { border-bottom-color: transparent; }
+.roadmap-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 0;
+}
+.roadmap-tag.done { color: var(--trace); }
+.roadmap-tag.planned { color: var(--amber); }
+.roadmap-text { font-family: var(--sans); font-size: 14.5px; color: var(--paper-dim); }
+.roadmap-text strong { color: var(--paper); font-weight: 600; }
+
+/* ============ FOOTER ============ */
+footer {
+  padding: 60px 0 40px;
+  border-top: 1px solid var(--line);
+}
+.footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.footer-links { display: flex; gap: 22px; font-family: var(--mono); font-size: 12.5px; color: var(--paper-dim); }
+.footer-links a { text-decoration: none; }
+.footer-links a:hover { color: var(--trace); }
+.footer-sig { font-family: var(--mono); font-size: 12px; color: var(--paper-dim); }
+
+/* reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; animation: none !important; }
+}
+
+/* focus visibility */
+a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
+  outline: 2px solid var(--trace);
+  outline-offset: 2px;
+}
+
+
+
+/* ============ CANVAS E-OS SIMULATOR ============ */
+.eos-hardware {
+  background: #111;
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.9), inset 0 2px 10px rgba(255,255,255,0.05);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  cursor: pointer;
+}
+#eosCanvas {
+  width: 400px;
+  height: 320px;
+  background: #000;
+  border: 2px solid #000;
+  border-radius: 4px;
+  box-shadow: 0 0 0 4px #222, inset 0 0 20px rgba(0,0,0,1);
+  image-rendering: pixelated;
+}
+.eos-logo {
+  margin-top: 24px;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 4px;
+  color: #444;
+  font-weight: bold;
+}
+
+</style>
 </head>
 <body>
 
-    <!-- HEADER / INTRODUCTION -->
-    <header class="container" style="padding-top: 100px; padding-bottom: 20px; text-align: center; max-width: 900px;">
-        <div class="badge mono">E-OS V2.1 Konsolu</div>
-        <h1 class="text-gradient" style="font-size: clamp(2.5rem, 5vw, 4.5rem); margin-bottom: 24px;">Sınırları Zorlayan Güç.</h1>
-        <p style="font-size: 1.25rem; color: var(--text-muted);">ESP32-S3 mimarisi üzerinde sıfırdan yazılmış E-OS işletim sistemi. Çift ekran, 6 tam ekran oyun ve muazzam bir akıcılık.</p>
-    </header>
 
-    <!-- HARDWARE -->
-    <section class="section container">
-        <div class="feature-split">
-            <div class="feature-text">
-                <h2>Donanım Mimarisi</h2>
-                <p>Cihazın kalbinde 240 MHz hızında çalışan çift çekirdekli ESP32-S3 bulunuyor. 16MB Flash ve 8MB PSRAM OPI ile bellek darboğazı tamamen ortadan kaldırıldı.</p>
-                <p>Ana sahnede aksiyonun aktığı 160x128 Renkli TFT (SPI) ekran varken, cihazın tepesindeki 128x64 OLED (I2C) ekran ise donanım bilgisi, taktiksel oyun istatistikleri ve logolar için ekstra bir panel görevi görüyor.</p>
-            </div>
-            <div class="feature-media">
-                <img src="images/cihaz 2.jpg" alt="Çift Ekranlı Donanım">
-            </div>
+
+<nav>
+  <div class="nav-inner">
+    <div class="nav-logo"><span class="dot">●</span> E-OS</div>
+    <div class="nav-links">
+      <a href="#mimari">Mimari</a>
+      <a href="#oyunlar">Oyunlar</a>
+      <a href="#yol-haritasi">Yol Haritası</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">GitHub →</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero reveal">
+    <div>
+      <h1 class="hero-title">ESP32 <span class="accent">el konsolu</span></h1>
+      <p class="hero-desc">
+        Tek kart, iki ekran. Bir çekirdek arka planda oyun matematiğini ve fizikleri hesaplarken, diğeri sadece grafikleri çizer. 10 farklı oyun, sıfır takılma.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#mimari">Mimariyi İncele</a>
+        <a class="btn btn-ghost" href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">Kaynak Kod</a>
+      </div>
+    </div>
+    <div class="hero-frame">
+      <img src="images/hero.jpg" alt="E-OS konsol ön görünüm">
+      
+    </div>
+  </section>
+
+  <div class="spec-strip">
+    <div class="spec-cell"><div class="spec-label">İşlemci</div><div class="spec-val">Dual-Core 240MHz</div></div>
+    <div class="spec-cell"><div class="spec-label">Bellek</div><div class="spec-val">16MB Flash / 8MB PSRAM</div></div>
+    <div class="spec-cell"><div class="spec-label">Ekranlar</div><div class="spec-val">160×128 TFT + 128×64 OLED</div></div>
+    <div class="spec-cell"><div class="spec-label">Dil</div><div class="spec-val">C/C++ · Arduino Fw</div></div>
+  </div>
+
+</div>
+
+<!-- ============ SCHEMATIC (SIGNATURE) ============ -->
+<section class="schematic-section" id="pinout">
+  <div class="wrap">
+    <div class="eyebrow">DEVRE ŞEMASI</div>
+    <h2 class="section-title">Pin bağlantıları.</h2>
+
+    <div class="schematic-board">
+      <div class="schematic-svg-wrap">
+        <svg id="schemSvg" viewBox="0 0 760 340" style="width:100%; height:auto; display:block;">
+          <!-- connecting lines (drawn first, under nodes) -->
+          <g id="schemLines"></g>
+          <!-- MCU center -->
+          <g>
+            <rect x="320" y="130" width="120" height="60" rx="6" fill="#181D24" stroke="#3BD16F" stroke-width="1.5"/>
+            <text x="380" y="156" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#F0EDE4" font-weight="700">ESP32-S3</text>
+            <text x="380" y="171" text-anchor="middle" font-family="JetBrains Mono" font-size="8.5" fill="#9BA3AD">N16R8 · Dual-Core</text>
+          </g>
+          <!-- nodes will be injected by JS -->
+          <g id="schemNodes"></g>
+        </svg>
+      </div>
+
+      <div class="pin-readout">
+        <div class="pin-readout-label">// seçili hat</div>
+        <div class="pin-readout-val" id="pinReadout">
+          Üstteki şemada bir düğüme dokun veya gezin.
+          <span class="pin-detail">Her düğüm gerçek GPIO atamasını ve paylaşılan hat varsa hangi modüllerle paylaşıldığını gösterir.</span>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-        <div class="specs-container mono">
-            <div class="spec-item">
-                <h4>İşlemci</h4>
-                <p>Dual-Core 240 MHz</p>
-            </div>
-            <div class="spec-item">
-                <h4>Bellek</h4>
-                <p>16MB Flash + 8MB PSRAM</p>
-            </div>
-            <div class="spec-item">
-                <h4>Depolama</h4>
-                <p>Micro SD Kart</p>
-            </div>
-            <div class="spec-item">
-                <h4>Ses</h4>
-                <p>8-bit Akustik Buzzer</p>
-            </div>
-            <div class="spec-item">
-                <h4>Framerate</h4>
-                <p>+60 FPS</p>
-            </div>
+<div class="wrap">
+
+  <!-- ============ ARCHITECTURE ============ -->
+  <section id="mimari">
+    <div class="eyebrow">ÇİFT ÇEKİRDEK MİMARİSİ</div>
+    <h2 class="section-title">Core 0 hesaplar. Core 1 çizer.<br>Hiçbiri birbirini bekletmez.</h2>
+    <p class="section-sub">Tüm yük iki çekirdeğe dengeli şekilde paylaştırıldı. Oyunun zorlu matematiğini ve fiziklerini arka planda Core 0 hesaplarken, Core 1 sadece ekrana kusursuz ve akıcı görüntüler çizmeye odaklanır.</p>
+
+    <div class="arch-grid">
+      <div class="arch-cell reveal stagger-1">
+        <div class="arch-core-label">CORE 0 — HESAPLAMA</div>
+        <div class="arch-task"><span>TaskEngine</span><span class="pri">priority 2</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ raycasting · fizik · AI</span><span class="pri">~30KB stack</span></div>
+        <div class="arch-task"><span>TaskRadar</span><span class="pri">priority 1</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ OLED çizimi, düşük öncelik</span><span class="pri"></span></div>
+      </div>
+      <div class="arch-cell reveal stagger-2">
+        <div class="arch-core-label">CORE 1 — RENDER</div>
+        <div class="arch-task"><span>TaskDisplay</span><span class="pri">priority 3</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ pushImage · HUD delta-draw</span><span class="pri">tek başına</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ triple buffer swap, mutex korumalı</span><span class="pri"></span></div>
+      </div>
+    </div>
+
+    <div style="margin-top: 44px;" class="reveal stagger-3">
+      <div class="code-window">
+        <div class="code-titlebar">
+          <div class="code-dot" style="background:#E8543D"></div>
+          <div class="code-dot" style="background:#E8A33D"></div>
+          <div class="code-dot" style="background:#3BD16F"></div>
+          <span>doom.ino — triple buffer swap</span>
         </div>
-    </section>
+        <pre><span class="cm">// fb_render: TaskEngine'in yazdığı buffer
+// fb_display: TaskDisplay'in okuduğu buffer
+// fb_ready: el değiştirmeye hazır olan buffer</span>
+<span class="kw">if</span> (<span class="fn">xSemaphoreTake</span>(fb_swap_mutex, <span class="fn">pdMS_TO_TICKS</span>(<span class="nm">2</span>)) == pdTRUE) {
+  fb_ready  = fb_render;
+  fb_render = <span class="cm">/* üçüncü boş buffer'ı seç */</span>;
+  <span class="fn">xSemaphoreGive</span>(fb_swap_mutex);
+}</pre>
+      </div>
+    </div>
+  </section>
 
-    <!-- SOFTWARE & UI -->
-    <section class="section container">
-        <div class="feature-split reverse">
-            <div class="feature-text">
-                <h2>Sıfırdan Yazılmış İşletim Sistemi</h2>
-                <p>Hazır bir arayüz kütüphanesi kullanılmadı. E-OS, cihazın donanımına tam entegre çalışır. Menüler arası geçişlerde kullanılan "Double-buffered UI" tekniği sayesinde ekranda en ufak bir yırtılma (screen-tear) yaşanmaz.</p>
-                <p>Sistem açıldığında donanımı denetler, pürüzsüz animasyonlarla ana menüye geçer ve oyunları saniyeler içinde yükler.</p>
-            </div>
-            <div class="feature-media">
-                <video autoplay loop muted playsinline style="width: 100%;">
-                    <source src="images/loading.mp4" type="video/mp4">
-                </video>
-            </div>
+  <hr class="rule trace">
+
+  <!-- ============ GAMES ============ -->
+  <section id="oyunlar">
+    <div class="eyebrow">OYUN KÜTÜPHANESİ</div>
+    <h2 class="section-title">10 oyun</h2>
+
+    <div class="game-list">
+
+      <div class="game-row reveal">
+        <div class="game-idx">01</div>
+        <div class="game-content">
+          <div class="game-name">DOOM</div>
+          <div class="game-desc">3D labirentlerde düşmanlara karşı hayatta kal.</div>
+          <span class="game-tag tag-new">FPS</span><span class="game-tag tag-core">3D RAYCAST</span><span class="game-tag tag-core">AKSİYON</span>
+          <div class="game-gallery">
+            <img src="screenshots/Doom/123.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/22.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/SCR_022.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/SCR_039.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/SCR_040.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/SCR_041.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Doom/SCR_042.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
         </div>
-    </section>
+        <div class="game-meta"></div>
+      </div>
 
-    <!-- UI DETAILS GALLERY -->
-    <section class="section container" style="padding-top: 0; border-bottom: none;">
-        <div class="games-grid" style="margin-top: 0;">
-            <div class="game-card">
-                <video autoplay loop muted playsinline>
-                    <source src="images/main menu.mp4" type="video/mp4">
-                </video>
-                <div class="game-card-content">
-                    <h3>Akıcı Ana Menü</h3>
-                    <p>Tüm oyunlara anında erişim sağlayan carousel (dönen) menü tasarımı.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/settings.jpg" alt="Ayarlar">
-                <div class="game-card-content">
-                    <h3>Sistem Ayarları</h3>
-                    <p>Ses, parlaklık ve sistem bilgilerini yönetebildiğiniz kontrol paneli.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/bilgi.jpg" alt="Bilgi Ekranı">
-                <div class="game-card-content">
-                    <h3>Donanım Bilgisi</h3>
-                    <p>OLED ekranda flash bellek bilgisi ve oyunlardaki en yüksek skoru (High Score) gösterir.</p>
-                </div>
-            </div>
+      <div class="game-row reveal">
+        <div class="game-idx">02</div>
+        <div class="game-content">
+          <div class="game-name">MODE 7 RACING</div>
+          <div class="game-desc">Klasik yarış mekanikleri. Checkpointleri toplayarak rakiplerini geride bırak.</div>
+          <span class="game-tag tag-core">MODE-7</span>
+          <div class="game-gallery">
+            <img src="screenshots/Mode 7/SCR_031.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Mode 7/SCR_032.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Mode 7/SCR_033.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
         </div>
-    </section>
+        <div class="game-meta"></div>
+      </div>
 
-    <!-- THE GAMES LIBRARY -->
-    <section class="section container">
-        <div style="text-align: center; margin-bottom: 40px;">
-            <div class="badge mono">Oyun Kütüphanesi</div>
-            <h2>Özel Kodlanmış 6 Efsane Oyun</h2>
-            <p style="color: var(--text-muted); max-width: 600px; margin: 16px auto 0;">Oyunlar basit birer port değil; ekran çözünürlüğüne ve kontrol şemasına göre satır satır yeniden yazıldı. Hepsinde donanım seviyesinde çalışan ortak Pause sistemi mevcuttur.</p>
+      <div class="game-row reveal">
+        <div class="game-idx">03</div>
+        <div class="game-content">
+          <div class="game-name">WIRE-FRAME 3D</div>
+          <div class="game-desc">Üç boyutlu uzay savaşları ve tehlikeli tünel uçuşları.</div>
+          <span class="game-tag tag-core">POLYGON 3D</span>
+          <div class="game-gallery">
+            <img src="screenshots/Wire 3D/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Wire 3D/1.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Wire 3D/SCR_004.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
         </div>
+        <div class="game-meta"></div>
+      </div>
 
-        <div class="games-grid">
-            <!-- DOOM -->
-            <div class="game-card">
-                <img src="images/doom1.jpg" alt="Doom Gameplay 1">
-                <div class="game-card-content">
-                    <h3>DOOM (3D Raycasting)</h3>
-                    <p>Gerçek zamanlı 3D ortamlar, silah mekanikleri ve düşman yapay zekası 100+ FPS hızında TFT ekrana akıyor.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/doom2.jpg" alt="Doom Gameplay 2">
-                <div class="game-card-content">
-                    <h3>DOOM Oynanış</h3>
-                    <p>Oyun içi koridorlardan ve düşman aksiyonundan diğer bir kare.</p>
-                </div>
-            </div>
-
-            <!-- SPACE INVADERS -->
-            <div class="game-card">
-                <img src="images/space.jpg" alt="Space Invaders">
-                <div class="game-card-content">
-                    <h3>Space Invaders</h3>
-                    <p>Uzaylı istilası! Akıcı gemi mekanikleri ve partikül efektleriyle baştan yaratılan klasik.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/space2.jpg" alt="Space Invaders 2">
-                <div class="game-card-content">
-                    <h3>Space Invaders Oynanış</h3>
-                    <p>Dalga dalga gelen uzaylıları yok etmeye devam edin.</p>
-                </div>
-            </div>
-
-            <!-- ARKANOID -->
-            <div class="game-card">
-                <img src="images/arkanoid1.jpg" alt="Arkanoid">
-                <div class="game-card-content">
-                    <h3>Arkanoid (Breakout)</h3>
-                    <p>Analog joystick'in hassasiyetiyle platformu kusursuz kontrol edin. Fizik motoruyla tuğlaları kırın.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/arkanoid2.jpg" alt="Arkanoid 2">
-                <div class="game-card-content">
-                    <h3>Arkanoid Oynanış</h3>
-                    <p>Zorlaşan tuğla dizilimlerini kırmaya devam edin.</p>
-                </div>
-            </div>
-
-            <!-- PACMAN & OTHERS -->
-            <div class="game-card">
-                <img src="images/pacman.jpg" alt="Pacman">
-                <div class="game-card-content">
-                    <h3>Pac-Man</h3>
-                    <p>Klasik labirent deneyimi. Hayalet yapay zekası tamamen cihaza uygun yeniden uyarlandı.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/flappy1.jpg" alt="Flappy Bird">
-                <div class="game-card-content">
-                    <h3>Flappy Bird</h3>
-                    <p>Milisaniyelik tepki süresi isteyen, sinir bozucu ama bir o kadar bağımlılık yapıcı efsane.</p>
-                </div>
-            </div>
-            <div class="game-card">
-                <img src="images/snake.jpg" alt="Snake">
-                <div class="game-card-content">
-                    <h3>Snake</h3>
-                    <p>Hızlanan mekanikleri ve akıcı köşeleriyle modernleştirilmiş klasik yılan oyunu.</p>
-                </div>
-            </div>
+      <div class="game-row reveal">
+        <div class="game-idx">04</div>
+        <div class="game-content">
+          <div class="game-name">GALACTIC STRIKE</div>
+          <div class="game-desc">Düşman filolarına karşı hayatta kal, güçlendirmeleri topla ve bölüm sonu canavarlarını yen.</div>
+          <span class="game-tag tag-core">SHOOT-EM-UP</span>
+          <div class="game-gallery">
+            <img src="screenshots/Galacticstrike/SCR_034.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Galacticstrike/SCR_035.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Galacticstrike/SCR_036.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Galacticstrike/SCR_037.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
         </div>
-    </section>
+        <div class="game-meta"></div>
+      </div>
 
-    <!-- IN-GAME FEATURES -->
-    <section class="section container" style="border-bottom: none;">
-        <div class="feature-split">
-            <div class="feature-text">
-                <h2>Oyun İçi Özellikler</h2>
-                <p>E-OS, oyun oynarken sizi asla yarı yolda bırakmaz.</p>
-                <ul style="list-style-position: inside; color: var(--text-muted); font-size: 1.125rem;">
-                    <li style="margin-bottom: 12px;"><strong>Donanımsal Pause (Duraklatma):</strong> Hangi oyunda olursanız olun, Joystick butonuna bastığınızda RTOS çekirdekleri güvenle askıya alınır.</li>
-                    <li style="margin-bottom: 12px;"><strong>Game Over Animasyonları:</strong> Her oyun, kendine has dramatik "Game Over" ekranlarıyla donatıldı.</li>
-                    <li><strong>Flashing & Yükleme:</strong> Oyunlar arası geçişler (OTA konseptiyle) hızlı ve pürüzsüz.</li>
-                </ul>
-            </div>
-            
-            <div class="games-grid" style="grid-template-columns: 1fr; gap: 16px; margin-top: 0;">
-                <img src="images/pause.jpg" alt="Pause" style="width: 100%; border-radius: 12px; border: 1px solid var(--border);">
-                <img src="images/game over.jpg" alt="Game Over" style="width: 100%; border-radius: 12px; border: 1px solid var(--border);">
-                <img src="images/flashing.jpg" alt="Flashing Yükleme" style="width: 100%; border-radius: 12px; border: 1px solid var(--border); object-fit: contain; max-height: 250px; background: #000;">
-            </div>
+      <div class="game-row reveal">
+        <div class="game-idx">05</div>
+        <div class="game-content">
+          <div class="game-name">PLATFORMER</div>
+          <div class="game-desc">Engelleri aş, tuzaklardan kaç ve bölümleri geç.</div>
+          <span class="game-tag tag-core">PLATFORM</span>
+          <div class="game-gallery">
+            <img src="screenshots/Platformer/SCR_026.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Platformer/SCR_027.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Platformer/SCR_028.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Platformer/SCR_029.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Platformer/SCR_030.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
         </div>
-    </section>
+        <div class="game-meta"></div>
+      </div>
 
-    <footer style="text-align: center; padding: 48px 24px; border-top: 1px solid var(--border); color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">
-        E-OS V2.1 Konsol Projesi | Sıfırdan Kodlandı
-    </footer>
+      <div class="game-row reveal">
+        <div class="game-idx">06</div>
+        <div class="game-content">
+          <div class="game-name">SPACE INVADERS</div>
+          <div class="game-desc">Dalga dalga gelen uzaylılara karşı hayatta kal.</div>
+          <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
+          <div class="game-gallery">
+            <img src="screenshots/SpaceInvaders/SCR_023.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/SpaceInvaders/SCR_024.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/SpaceInvaders/SCR_025.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
+        </div>
+        <div class="game-meta"></div>
+      </div>
+
+      <div class="game-row reveal">
+        <div class="game-idx">07</div>
+        <div class="game-content">
+          <div class="game-name">ARKANOID</div>
+          <div class="game-desc">Giderek hızlanan topla tüm tuğlaları kır.</div>
+          <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
+          <div class="game-gallery">
+            <img src="screenshots/Arkanoid/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Arkanoid/SCR_005.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Arkanoid/SCR_011.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Arkanoid/SCR_012.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Arkanoid/SCR_013.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
+        </div>
+        <div class="game-meta"></div>
+      </div>
+
+      <div class="game-row reveal">
+        <div class="game-idx">08</div>
+        <div class="game-content">
+          <div class="game-name">PAC-MAN</div>
+          <div class="game-desc">Hayaletlerden kaç, labirentteki tüm noktaları topla.</div>
+          <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
+          <div class="game-gallery">
+            <img src="screenshots/Pacman/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Pacman/SCR_005.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Pacman/SCR_006.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Pacman/SCR_007.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
+        </div>
+        <div class="game-meta"></div>
+      </div>
+
+      <div class="game-row reveal">
+        <div class="game-idx">09</div>
+        <div class="game-content">
+          <div class="game-name">FLAPPY BIRD</div>
+          <div class="game-desc">Boru engellerinin arasından dikkatlice uç.</div>
+          <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
+          <div class="game-gallery">
+            <img src="screenshots/Flappy/SCR_002.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Flappy/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Flappy/SCR_006.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Flappy/SCR_007.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Flappy/SCR_008.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
+        </div>
+        <div class="game-meta"></div>
+      </div>
+
+      <div class="game-row reveal">
+        <div class="game-idx">10</div>
+        <div class="game-content">
+          <div class="game-name">SNAKE</div>
+          <div class="game-desc">Kuyruğunu uzat, duvarlara ve kendine çarpma.</div>
+          <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
+          <div class="game-gallery">
+            <img src="screenshots/Snake/SCR_005.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Snake/qwe.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Snake/SCR_004.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+            <img src="screenshots/Snake/SCR_006.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
+          </div>
+        </div>
+        <div class="game-meta"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ OS FEATURES ============ -->
+  <section>
+    <div class="eyebrow">İŞLETİM SİSTEMİ</div>
+    <h2 class="section-title" style="margin-bottom: 16px;">E-OS Launcher.</h2>
+    <p class="section-sub">Tüm oyunlara ev sahipliği yapan akıcı, dönen (carousel) ana menü arayüzü.</p>
+
+    <div class="reveal stagger-1" style="display: flex; justify-content: center; margin-bottom: 60px;">
+      <div class="eos-hardware">
+        <canvas id="eosCanvas" width="160" height="128"></canvas>
+        
+      </div>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature-cell reveal stagger-1">
+        <div class="feature-icon">[ pause ]</div>
+        <div class="feature-title">Donanımsal Duraklatma</div>
+        <div class="feature-desc">Hangi oyunda olursan ol, joystick butonuna basınca ilgili RTOS task'ı anında askıya alınır.</div>
+      </div>
+      <div class="feature-cell reveal">
+        <div class="feature-icon">[ ota ]</div>
+        <div class="feature-title">OTA Bootloader</div>
+        <div class="feature-desc">SD karttan binary okuyup flash'a yazar. RTC magic value ile reboot sonrası oyun seçimi hatırlanır.</div>
+      </div>
+      <div class="feature-cell reveal">
+        <div class="feature-icon">[ ui ]</div>
+        <div class="feature-title">Double-Buffered Menü</div>
+        <div class="feature-desc">Dönen carousel menü, ekran yırtılması olmadan akar — telefon hissiyatına yakın geçişler.</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ ROADMAP ============ -->
+  <section id="yol-haritasi">
+    <div class="eyebrow">YOL HARİTASI</div>
+    <h2 class="section-title">Sırada ne var.</h2>
+
+    <div>
+      <div class="roadmap-row">
+        <div class="roadmap-tag done">v1.0 — tamam</div>
+        <div class="roadmap-text"><strong>10 oyunluk kütüphane</strong> — Mode 7, Wire-Frame 3D, Galactic Strike ve Platformer ile çekirdek 6 oyuna katıldı. Ortak <span class="mono" style="color:var(--paper)">hardware_config.h</span> ile pin tanımları tekilleştirildi.</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-tag planned">v2.0 — planlanan</div>
+        <div class="roadmap-text"><strong>LiPo batarya entegrasyonu</strong> — korumalı TP4056 şarj devresi, voltaj bölücü ile yazılımsal pil yüzdesi takibi.</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-tag planned">v2.1 — planlanan</div>
+        <div class="roadmap-text"><strong>I²S ses çıkışı</strong> — MAX98357A amplifikatör ile buzzer'ın yerini gerçek PCM ses alacak.</div>
+      </div>
+      <div class="roadmap-row">
+        <div class="roadmap-tag planned">v3.0 — fikir aşamasında</div>
+        <div class="roadmap-text"><strong>ESP-NOW multiplayer</strong> — ESP32-S3'ün dahili radyosu üzerinden iki cihaz arası düşük gecikmeli bağlantı.</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ BUILD ============ -->
+  <section>
+    <div class="eyebrow">DERLEME</div>
+    <h2 class="section-title">Arduino IDE veya PlatformIO.</h2>
+    <p class="section-sub">Gerekli kütüphaneler ve pin ayarları aşağıda — tüm detaylar repo içinde.</p>
+
+    <div class="code-window">
+      <div class="code-titlebar">
+        <div class="code-dot" style="background:#E8543D"></div>
+        <div class="code-dot" style="background:#E8A33D"></div>
+        <div class="code-dot" style="background:#3BD16F"></div>
+        <span>kurulum</span>
+      </div>
+      <pre><span class="cm">// Gerekli kütüphaneler</span>
+<span class="fn">TFT_eSPI</span>        <span class="cm">// Ekran sürücüsü — User_Setup.h ile yapılandırılır</span>
+<span class="fn">U8g2lib</span>         <span class="cm">// OLED sürücüsü (HW I2C modunda)</span>
+<span class="fn">Preferences</span>     <span class="cm">// NVS — skor / ayar kalıcılığı</span>
+
+<span class="cm">// Tüm oyunlar ortak pin dosyasını include eder</span>
+<span class="kw">#include</span> <span class="str">"../hardware_config.h"</span></pre>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-row">
+      <div class="footer-sig">E-OS — ESP32 el konsolu.</div>
+      <div class="footer-links">
+        <a href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">GitHub</a>
+        <a href="#pinout">Pinout</a>
+        <a href="#oyunlar">Oyunlar</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ===================== SCHEMATIC PINOUT DATA + RENDER =====================
+const pins = [
+  { id:'tft',   x:110, y:40,  label:'TFT ST7735',  detail:'MOSI=11 · SCLK=12 · CS=15 · DC=14' },
+  { id:'sd',    x:650, y:40,  label:'SD KART',      detail:'MOSI=11 · MISO=42 · SCK=12 · CS=10' },
+  { id:'oled',  x:110, y:280, label:'OLED I²C',     detail:'SDA=8 · SCL=9' },
+  { id:'joy',   x:650, y:280, label:'JOYSTICK',     detail:'VRX=GPIO1 · VRY=GPIO2 · SW=GPIO18' },
+  { id:'btnab', x:160, y:160, label:'BUTON A/B',    detail:'BTN_A=GPIO3 · BTN_B=GPIO21' },
+  { id:'btncd', x:600, y:160, label:'BUTON C/D',    detail:'BTN_C=GPIO4 · BTN_D=GPIO6' },
+  { id:'buzz',  x:380, y:280, label:'BUZZER',       detail:'GPIO16' },
+];
+
+const linesG = document.getElementById('schemLines');
+const nodesG = document.getElementById('schemNodes');
+const readout = document.getElementById('pinReadout');
+const cx = 380, cy = 160;
+
+pins.forEach(p => {
+  // connecting line
+  const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+  const midX = (p.x + cx) / 2;
+  line.setAttribute('d', `M ${p.x} ${p.y} Q ${midX} ${p.y} ${cx} ${cy}`);
+  line.setAttribute('class', 'schem-line');
+  linesG.appendChild(line);
+
+  // node group
+  const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+  g.setAttribute('class', 'schem-node');
+  g.setAttribute('tabindex', '0');
+  g.setAttribute('role', 'button');
+  g.setAttribute('aria-label', p.label);
+
+  const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  circle.setAttribute('cx', p.x);
+  circle.setAttribute('cy', p.y);
+  circle.setAttribute('r', 7);
+  g.appendChild(circle);
+
+  const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+  text.setAttribute('x', p.x);
+  text.setAttribute('y', p.y - 14);
+  text.setAttribute('text-anchor', 'middle');
+  text.textContent = p.label;
+  g.appendChild(text);
+
+  nodesG.appendChild(g);
+
+  function activate() {
+    document.querySelectorAll('.schem-node').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.schem-line').forEach(l => l.classList.remove('active'));
+    g.classList.add('active');
+    line.classList.add('active');
+    readout.innerHTML = `<strong style="color:var(--trace)">${p.label}</strong><span class="pin-detail">${p.detail}</span>`;
+  }
+
+  g.addEventListener('mouseenter', activate);
+  g.addEventListener('click', activate);
+  g.addEventListener('focus', activate);
+});
+</script>
+
+<script>
+// 2. SCROLL REVEAL
+const observerOptions = {
+  root: null,
+  rootMargin: '0px',
+  threshold: 0.1
+};
+
+const observer = new IntersectionObserver((entries, observer) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('active');
+      observer.unobserve(entry.target);
+    }
+  });
+}, observerOptions);
+
+document.querySelectorAll('.reveal').forEach(el => {
+  observer.observe(el);
+});
+
+// 3. CODE TYPING EFFECT
+const codePres = document.querySelectorAll('.code-window pre');
+
+codePres.forEach(codePre => {
+  const originalHTML = codePre.innerHTML;
+  codePre.innerHTML = '';
+  codePre.classList.add('code-typing-container');
+
+  const codeObserver = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) {
+      codeObserver.disconnect();
+      codePre.classList.add('active');
+      
+      let i = 0;
+      let isTag = false;
+      let currentHTML = '';
+      
+      const cursor = document.createElement('span');
+      cursor.className = 'type-cursor';
+      
+      const typeInterval = setInterval(() => {
+        if (i >= originalHTML.length) {
+          clearInterval(typeInterval);
+          cursor.remove();
+          return;
+        }
+        
+        const char = originalHTML[i];
+        currentHTML += char;
+        
+        if (char === '<') isTag = true;
+        if (char === '>') isTag = false;
+        
+        if (!isTag) {
+          codePre.innerHTML = currentHTML;
+          codePre.appendChild(cursor);
+        }
+        
+        i++;
+      }, 8);
+    }
+  }, { threshold: 0.5 });
+
+  codeObserver.observe(codePre);
+});
+
+</script>
+
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <div class="lightbox-close" onclick="closeLightbox()">×</div>
+  <div id="lb-prev" class="lb-nav lb-prev" onclick="navLightbox(-1, event)">&#10094;</div>
+  <img id="lightbox-img" src="" alt="Oyun İçi Ekran Görüntüsü" onclick="event.stopPropagation()">
+  <div id="lb-next" class="lb-nav lb-next" onclick="navLightbox(1, event)">&#10095;</div>
+</div>
+
+<script>
+let currentGalleryImgs = [];
+let currentIndex = -1;
+
+function openLightbox(imgEl) {
+  if (imgEl && imgEl.closest) {
+    const gallery = imgEl.closest('.game-gallery');
+    currentGalleryImgs = Array.from(gallery.querySelectorAll('img.game-shot')).map(img => img.src);
+    currentIndex = currentGalleryImgs.indexOf(imgEl.src);
+  } else {
+    currentGalleryImgs = [imgEl];
+    currentIndex = 0;
+  }
+  
+  updateLightboxImage();
+  document.getElementById('lightbox').classList.add('active');
+}
+
+function updateLightboxImage() {
+  if (currentIndex < 0 || currentIndex >= currentGalleryImgs.length) return;
+  
+  document.getElementById('lightbox-img').src = currentGalleryImgs[currentIndex];
+  
+  const prevBtn = document.getElementById('lb-prev');
+  const nextBtn = document.getElementById('lb-next');
+  
+  if (prevBtn) prevBtn.style.display = currentIndex > 0 ? 'flex' : 'none';
+  if (nextBtn) nextBtn.style.display = currentIndex < currentGalleryImgs.length - 1 ? 'flex' : 'none';
+}
+
+function navLightbox(dir, e) {
+  if (e) e.stopPropagation();
+  let newIdx = currentIndex + dir;
+  if (newIdx >= 0 && newIdx < currentGalleryImgs.length) {
+    currentIndex = newIdx;
+    updateLightboxImage();
+  }
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('active');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('lightbox').classList.contains('active')) return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') navLightbox(-1);
+  if (e.key === 'ArrowRight') navLightbox(1);
+});
+</script>
+
+
+
+
+
+<script>
+// ===================== E-OS CANVAS SIMULATOR =====================
+(function(){
+  const canvas = document.getElementById('eosCanvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  // Colors
+  const RGB_FIX = (r,g,b) => `rgb(${r},${g},${b})`;
+  const COL_BG_DARK    = RGB_FIX(8, 8, 20);
+  const COL_BG_STATUS  = RGB_FIX(12, 12, 28);
+  const COL_ACCENT     = RGB_FIX(80, 180, 255);
+  const COL_ACCENT_DIM = RGB_FIX(30, 70, 100);
+  const COL_WHITE      = RGB_FIX(255, 255, 255);
+  const COL_GRAY       = RGB_FIX(120, 120, 120);
+  const COL_DARK_GRAY  = RGB_FIX(50, 50, 50);
+  const COL_BLACK      = RGB_FIX(0, 0, 0);
+  const COL_SUCCESS    = RGB_FIX(50, 255, 80);
+  const COL_DANGER     = RGB_FIX(255, 50, 50);
+
+  // Drawing primitives
+  function fillRect(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+  function drawHLine(x,y,w,c) { ctx.fillStyle=c; ctx.fillRect(x,y,w,1); }
+  function drawVLine(x,y,h,c) { ctx.fillStyle=c; ctx.fillRect(x,y,1,h); }
+  function drawPixel(x,y,c) { ctx.fillStyle=c; ctx.fillRect(x,y,1,1); }
+  function drawRect(x,y,w,h,c) {
+    drawHLine(x,y,w,c); drawHLine(x,y+h-1,w,c);
+    drawVLine(x,y,h,c); drawVLine(x+w-1,y,h,c);
+  }
+  function fillCircle(x,y,r,c) {
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  }
+  function drawCircle(x,y,r,c) {
+    ctx.strokeStyle=c; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke();
+  }
+  function fillRoundRect(x,y,w,h,r,c) {
+    ctx.fillStyle=c; ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill();
+  }
+  function drawLine(x1,y1,x2,y2,c) {
+    ctx.strokeStyle=c; ctx.lineWidth=1; ctx.beginPath();
+    ctx.moveTo(x1+0.5,y1+0.5); ctx.lineTo(x2+0.5,y2+0.5); ctx.stroke();
+  }
+  function fillTriangle(x1,y1,x2,y2,x3,y3,c) {
+    ctx.fillStyle=c; ctx.beginPath();
+    ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.fill();
+  }
+
+  // ===================== DRAW BIG ICONS =====================
+  function drawBigIconDoom(x,y) {
+    const bone = RGB_FIX(255,200,150), dark = RGB_FIX(180,80,20), glow = RGB_FIX(255,100,20), eye = RGB_FIX(255,40,0);
+    fillRoundRect(x+10,y+4,28,26,8,bone); fillRoundRect(x+12,y+6,24,22,6,RGB_FIX(240,190,140));
+    fillRoundRect(x+14,y+12,8,8,3,RGB_FIX(30,5,0)); fillRoundRect(x+26,y+12,8,8,3,RGB_FIX(30,5,0));
+    fillCircle(x+17,y+15,2,eye); fillCircle(x+29,y+15,2,eye); drawPixel(x+16,y+14,glow); drawPixel(x+28,y+14,glow);
+    fillTriangle(x+22,y+20,x+25,y+20,x+23,y+24,RGB_FIX(30,5,0)); fillRect(x+14,y+27,20,4,RGB_FIX(100,40,10));
+    for(let i=0;i<5;i++) fillRect(x+15+i*4,y+27,3,5,bone);
+    drawLine(x+20,y+5,x+16,y+11,dark); drawLine(x+30,y+6,x+33,y+11,dark);
+    fillTriangle(x+8,y+47,x+12,y+34,x+16,y+47,RGB_FIX(255,60,0)); fillTriangle(x+20,y+47,x+24,y+32,x+28,y+47,RGB_FIX(255,80,0));
+    fillTriangle(x+32,y+47,x+36,y+35,x+40,y+47,RGB_FIX(255,60,0));
+    drawPixel(x+12,y+36,RGB_FIX(255,200,50)); drawPixel(x+24,y+34,RGB_FIX(255,220,50));
+  }
+  function drawBigIconSnake(x,y) {
+    const body=RGB_FIX(40,200,80), bodyLt=RGB_FIX(80,255,120), bodyDk=RGB_FIX(20,140,50), head=RGB_FIX(60,255,100), apple=RGB_FIX(255,50,40);
+    fillRoundRect(x+6,y+34,24,6,2,body); drawHLine(x+6,y+35,24,bodyLt); fillRoundRect(x+26,y+20,6,18,2,body); drawVLine(x+27,y+20,18,bodyLt);
+    fillRoundRect(x+12,y+16,18,6,2,body); drawHLine(x+12,y+17,18,bodyLt); fillRoundRect(x+10,y+6,6,14,2,body); drawVLine(x+11,y+6,14,bodyLt);
+    fillRoundRect(x+8,y+2,10,8,3,head); fillCircle(x+11,y+5,1,COL_WHITE); drawPixel(x+12,y+5,COL_BLACK);
+    fillCircle(x+15,y+5,1,COL_WHITE); drawPixel(x+16,y+5,COL_BLACK); drawHLine(x+18,y+6,3,RGB_FIX(255,80,80)); drawPixel(x+21,y+5,RGB_FIX(255,80,80));
+    fillRect(x+4,y+36,4,4,bodyDk); fillRect(x+2,y+38,3,2,bodyDk); fillCircle(x+38,y+12,4,apple); fillCircle(x+38,y+11,4,RGB_FIX(255,70,50));
+    drawPixel(x+36,y+10,RGB_FIX(255,150,140)); fillRect(x+38,y+6,2,3,RGB_FIX(80,180,40)); fillCircle(x+36,y+40,3,apple); drawPixel(x+35,y+39,RGB_FIX(255,150,140));
+  }
+  function drawBigIconFlappy(x,y) {
+    const b=RGB_FIX(255,220,40), w=RGB_FIX(255,170,20), p=RGB_FIX(80,200,60), plt=RGB_FIX(120,240,100);
+    fillRect(x+2,y+0,10,18,p); fillRect(x+0,y+16,14,4,p); drawVLine(x+3,y+0,18,plt); fillRect(x+0,y+36,14,4,p); fillRect(x+2,y+38,10,10,p); drawVLine(x+3,y+38,10,plt);
+    fillRect(x+36,y+0,10,10,p); fillRect(x+34,y+8,14,4,p); drawVLine(x+37,y+0,10,plt); fillRect(x+34,y+40,14,4,p); fillRect(x+36,y+42,10,6,p); drawVLine(x+37,y+42,6,plt);
+    fillCircle(x+24,y+24,8,b); fillCircle(x+24,y+23,8,RGB_FIX(255,230,60)); fillRoundRect(x+14,y+22,10,6,2,w); drawHLine(x+15,y+23,8,RGB_FIX(255,190,50));
+    fillCircle(x+28,y+21,4,COL_WHITE); fillCircle(x+29,y+21,2,COL_BLACK); drawPixel(x+28,y+20,COL_WHITE); fillRoundRect(x+31,y+24,8,4,1,RGB_FIX(255,100,30));
+  }
+  function drawBigIconSpace(x,y) {
+    const a=RGB_FIX(220,60,255), alt=RGB_FIX(255,120,255), s=RGB_FIX(100,220,255), sdk=RGB_FIX(60,140,180), st=RGB_FIX(200,200,255);
+    drawPixel(x+5,y+3,st); drawPixel(x+42,y+8,st); drawPixel(x+15,y+42,st); drawPixel(x+40,y+38,st);
+    fillRect(x+16,y+4,16,4,a); fillRect(x+12,y+8,24,4,a); fillRect(x+10,y+10,28,4,a); fillRect(x+10,y+14,28,4,a);
+    fillRect(x+14,y+10,4,4,COL_BLACK); fillRect(x+30,y+10,4,4,COL_BLACK); drawPixel(x+14,y+10,alt); drawPixel(x+30,y+10,alt);
+    fillRect(x+12,y+2,2,4,a); fillRect(x+34,y+2,2,4,a); fillRect(x+10,y+18,4,4,a); fillRect(x+18,y+18,4,2,a); fillRect(x+26,y+18,4,2,a); fillRect(x+34,y+18,4,4,a);
+    drawVLine(x+20,y+22,6,RGB_FIX(255,255,80)); drawVLine(x+28,y+23,5,RGB_FIX(255,255,80));
+    fillRect(x+16,y+38,16,4,s); fillRect(x+20,y+36,8,2,s); fillRect(x+22,y+34,4,2,sdk); drawPixel(x+24,y+33,s); drawVLine(x+24,y+28,5,RGB_FIX(80,255,80));
+  }
+  function drawBigIconArkanoid(x,y) {
+    const pad = RGB_FIX(30,210,255), padLt = RGB_FIX(100,230,255);
+    const bricks = [RGB_FIX(255,60,40), RGB_FIX(255,160,30), RGB_FIX(255,230,40), RGB_FIX(60,220,60), RGB_FIX(60,140,255)];
+    for(let r=0;r<5;r++){
+      for(let c=0;c<4;c++){
+        fillRect(x+4+c*11,y+2+r*6,10,5,bricks[r]); drawRect(x+4+c*11,y+2+r*6,10,5,RGB_FIX(40,40,40)); drawHLine(x+5+c*11,y+3+r*6,8,RGB_FIX(255,255,200));
+      }
+    }
+    fillRect(x+4,y+2,10,5,COL_BG_DARK); fillRect(x+26,y+8,10,5,COL_BG_DARK); fillRect(x+37,y+2,10,5,COL_BG_DARK);
+    fillCircle(x+24,y+34,3,COL_WHITE); drawPixel(x+23,y+33,RGB_FIX(200,200,255));
+    fillRoundRect(x+12,y+42,24,4,2,pad); drawHLine(x+14,y+42,20,padLt);
+  }
+  function drawBigIconPacman(x,y) {
+    const pac=RGB_FIX(255,255,0), dot=RGB_FIX(255,200,150), maze=RGB_FIX(30,30,200), ghostB=RGB_FIX(255,80,80);
+    drawHLine(x,y,48,maze); drawHLine(x,y+47,48,maze); drawVLine(x,y,48,maze); drawVLine(x+47,y,48,maze);
+    drawHLine(x+8,y+10,14,maze); drawHLine(x+28,y+10,14,maze); drawHLine(x+8,y+38,14,maze); drawHLine(x+28,y+38,14,maze);
+    fillCircle(x+16,y+24,10,pac); fillCircle(x+16,y+23,10,RGB_FIX(255,255,40));
+    fillTriangle(x+18,y+24, x+28,y+20, x+28,y+28, RGB_FIX(12,12,20)); fillCircle(x+16,y+19,2,COL_BLACK); drawPixel(x+15,y+18,COL_WHITE);
+    fillCircle(x+32,y+24,2,dot); fillCircle(x+39,y+24,1,dot); fillCircle(x+44,y+24,1,dot); fillCircle(x+40,y+12,3,dot);
+    fillRoundRect(x+32,y+32,12,10,4,ghostB); fillRect(x+32,y+38,12,6,ghostB);
+    fillRect(x+32,y+42,3,2,RGB_FIX(12,12,20)); fillRect(x+38,y+42,3,2,RGB_FIX(12,12,20));
+    fillCircle(x+36,y+36,2,COL_WHITE); fillCircle(x+40,y+36,2,COL_WHITE);
+  }
+  function drawBigIconMode7(x,y) {
+    fillRect(x+10,y+24,28,14,RGB_FIX(100,100,100)); fillTriangle(x+24,y+4, x+10,y+24, x+38,y+24, RGB_FIX(50,50,200)); fillRect(x+20,y+20,8,8,RGB_FIX(255,0,0));
+  }
+  function drawBigIconWire3D(x,y) {
+    drawRect(x+12,y+12,16,16,RGB_FIX(0,255,0)); drawRect(x+20,y+20,16,16,RGB_FIX(0,200,0));
+    drawLine(x+12,y+12, x+20,y+20, RGB_FIX(0,150,0)); drawLine(x+28,y+12, x+36,y+20, RGB_FIX(0,150,0));
+    drawLine(x+12,y+28, x+20,y+36, RGB_FIX(0,150,0)); drawLine(x+28,y+28, x+36,y+36, RGB_FIX(0,150,0));
+  }
+  function drawBigIconStrike(x,y) {
+    fillTriangle(x+24,y+8, x+14,y+38, x+34,y+38, RGB_FIX(100,200,255)); fillRect(x+22,y+38,4,6,RGB_FIX(255,100,0));
+  }
+  function drawBigIconJump(x,y) {
+    fillRect(x+8,y+32,32,8,RGB_FIX(0,200,0)); fillRect(x+16,y+16,10,14,RGB_FIX(255,69,0));
+  }
+  function drawBigIconSettings(x,y) {
+    const go = RGB_FIX(150,150,150), gi = RGB_FIX(100,100,100), gc = RGB_FIX(60,60,60); const cx=x+24, cy=y+22;
+    fillCircle(cx,cy,14,go); fillCircle(cx,cy,11,gi); fillCircle(cx,cy,6,gc); fillCircle(cx,cy,3,RGB_FIX(12,12,20));
+    fillRect(cx-3,cy-17,6,6,go); fillRect(cx-3,cy+11,6,6,go); fillRect(cx-17,cy-3,6,6,go); fillRect(cx+11,cy-3,6,6,go);
+    fillRect(cx-13,cy-13,5,5,go); fillRect(cx+8,cy-13,5,5,go); fillRect(cx-13,cy+8,5,5,go); fillRect(cx+8,cy+8,5,5,go);
+    drawCircle(cx,cy,3,COL_ACCENT); ctx.fillStyle = go; ctx.font = "8px 'Courier New'"; ctx.fillText("CONFIG", x+6, y+40);
+  }
+
+  // ===================== DRAW SMALL ICONS =====================
+  function drawSmallIconDoom(x,y,col) {
+    fillRoundRect(x+4,y+2,12,11,4,col); fillRect(x+6,y+6,3,3,COL_BLACK); fillRect(x+11,y+6,3,3,COL_BLACK); fillRect(x+9,y+10,2,2,COL_BLACK);
+    fillRect(x+5,y+13,10,2,col); for(let i=0;i<3;i++) fillRect(x+6+i*3,y+13,2,3,RGB_FIX(200,180,140));
+    fillRect(x+3,y+17,2,2,RGB_FIX(255,80,0)); fillRect(x+9,y+16,2,3,RGB_FIX(255,80,0)); fillRect(x+15,y+17,2,2,RGB_FIX(255,80,0));
+  }
+  function drawSmallIconSnake(x,y,col) {
+    fillRect(x+3,y+14,10,3,col); fillRect(x+11,y+8,3,9,col); fillRect(x+5,y+6,8,3,col); fillRect(x+4,y+2,4,6,col);
+    drawPixel(x+5,y+3,COL_WHITE); fillCircle(x+16,y+4,2,RGB_FIX(255,50,40));
+  }
+  function drawSmallIconFlappy(x,y,col) {
+    fillCircle(x+8,y+10,5,col); fillCircle(x+8,y+9,5,RGB_FIX(255,230,60)); fillRect(x+3,y+9,5,3,RGB_FIX(255,170,20));
+    fillCircle(x+11,y+8,2,COL_WHITE); drawPixel(x+12,y+8,COL_BLACK); fillRect(x+14,y+10,4,2,RGB_FIX(255,100,30));
+    fillRect(x+1,y+0,4,5,RGB_FIX(80,200,60)); fillRect(x+1,y+16,4,4,RGB_FIX(80,200,60));
+  }
+  function drawSmallIconSpace(x,y,col) {
+    fillRect(x+6,y+2,8,3,col); fillRect(x+4,y+5,12,3,col); fillRect(x+3,y+6,14,3,col);
+    fillRect(x+5,y+6,2,2,COL_BLACK); fillRect(x+13,y+6,2,2,COL_BLACK); fillRect(x+4,y+9,2,2,col); fillRect(x+14,y+9,2,2,col);
+    fillRect(x+7,y+15,6,2,RGB_FIX(100,220,255)); fillRect(x+9,y+14,2,1,RGB_FIX(100,220,255));
+  }
+  function drawSmallIconArkanoid(x,y,col) {
+    fillRect(x+2,y+2,5,3,RGB_FIX(255,60,40)); fillRect(x+8,y+2,5,3,RGB_FIX(60,220,60)); fillRect(x+14,y+2,5,3,RGB_FIX(60,140,255));
+    fillRect(x+2,y+6,5,3,RGB_FIX(255,230,40)); fillRect(x+8,y+6,5,3,RGB_FIX(255,160,30)); fillRect(x+14,y+6,5,3,RGB_FIX(255,60,40));
+    fillCircle(x+10,y+13,2,COL_WHITE); fillRect(x+5,y+17,10,2,col);
+  }
+  function drawSmallIconPacman(x,y,col) {
+    fillCircle(x+7,y+10,6,col); fillTriangle(x+9,y+10, x+15,y+7, x+15,y+13, RGB_FIX(8,8,16)); drawPixel(x+7,y+7,COL_BLACK); fillCircle(x+16,y+10,1,RGB_FIX(255,200,150));
+  }
+  function drawSmallIconMode7(x,y,col) {
+    fillRect(x+5,y+10,10,6,col); fillRect(x+8,y+8,4,4,RGB_FIX(255,0,0));
+  }
+  function drawSmallIconWire3D(x,y,col) {
+    drawRect(x+4,y+4,8,8,col); drawRect(x+8,y+8,8,8,col); drawLine(x+4,y+4, x+8,y+8,col);
+  }
+  function drawSmallIconStrike(x,y,col) {
+    fillTriangle(x+10,y+4, x+5,y+16, x+15,y+16, col);
+  }
+  function drawSmallIconJump(x,y,col) {
+    fillRect(x+4,y+14,12,4,RGB_FIX(0,200,0)); fillRect(x+8,y+6,4,6,col);
+  }
+  function drawSmallIconSettings(x,y,col) {
+    let cx=x+10, cy=y+10; fillCircle(cx,cy,6,col); fillCircle(cx,cy,4,RGB_FIX(80,80,80)); fillCircle(cx,cy,2,RGB_FIX(12,12,20));
+    fillRect(cx-2,cy-8,4,3,col); fillRect(cx-2,cy+5,4,3,col); fillRect(cx-8,cy-2,3,4,col); fillRect(cx+5,cy-2,3,4,col);
+  }
+
+  const games = [
+    { label:"DOOM", pri:RGB_FIX(255,100,20), dim:RGB_FIX(80,30,8), draw:drawBigIconDoom, drawSmall:drawSmallIconDoom },
+    { label:"SNAKE", pri:RGB_FIX(50,255,100), dim:RGB_FIX(15,80,30), draw:drawBigIconSnake, drawSmall:drawSmallIconSnake },
+    { label:"FLAPPY", pri:RGB_FIX(255,220,30), dim:RGB_FIX(80,70,10), draw:drawBigIconFlappy, drawSmall:drawSmallIconFlappy },
+    { label:"SPACE", pri:RGB_FIX(220,60,255), dim:RGB_FIX(70,20,80), draw:drawBigIconSpace, drawSmall:drawSmallIconSpace },
+    { label:"ARKANOID", pri:RGB_FIX(30,210,255), dim:RGB_FIX(10,65,80), draw:drawBigIconArkanoid, drawSmall:drawSmallIconArkanoid },
+    { label:"PACMAN", pri:RGB_FIX(255,255,0), dim:RGB_FIX(80,80,0), draw:drawBigIconPacman, drawSmall:drawSmallIconPacman },
+    { label:"MODE7", pri:RGB_FIX(50,50,200), dim:RGB_FIX(20,20,80), draw:drawBigIconMode7, drawSmall:drawSmallIconMode7 },
+    { label:"3D WIRE", pri:RGB_FIX(0,255,0), dim:RGB_FIX(0,80,0), draw:drawBigIconWire3D, drawSmall:drawSmallIconWire3D },
+    { label:"STRIKE", pri:RGB_FIX(100,200,255), dim:RGB_FIX(40,80,100), draw:drawBigIconStrike, drawSmall:drawSmallIconStrike },
+    { label:"JUMP", pri:RGB_FIX(255,69,0), dim:RGB_FIX(100,30,0), draw:drawBigIconJump, drawSmall:drawSmallIconJump },
+    { label:"AYARLAR", pri:RGB_FIX(150,150,150), dim:RGB_FIX(50,50,50), draw:drawBigIconSettings, drawSmall:drawSmallIconSettings }
+  ];
+
+  // ===================== UI DRAWING =====================
+  function drawStatusBar() {
+    fillRect(0,0,160,14,COL_BG_STATUS); fillTriangle(4,3,4,9,8,6,COL_ACCENT);
+    ctx.fillStyle=COL_WHITE; ctx.font="8px 'Courier New'"; ctx.fillText("E-OS", 12, 10);
+    drawRect(150,4,7,6,COL_GRAY); drawVLine(157,6,2,COL_GRAY); fillRect(151,5,5,4,COL_SUCCESS);
+    let sx=138; fillRect(sx,6,2,2,COL_WHITE); drawVLine(sx+2,5,4,COL_WHITE); drawVLine(sx+3,4,6,COL_WHITE);
+    drawVLine(sx+5,5,4,COL_SUCCESS); drawVLine(sx+7,4,6,COL_SUCCESS);
+    drawHLine(0,14,160,COL_ACCENT_DIM); drawHLine(30,14,100,COL_ACCENT); drawHLine(55,14,50,RGB_FIX(120,210,255));
+  }
+  function drawPageDots(selected) {
+    let dotY=98; fillRect(0,dotY-2,160,8,COL_BG_DARK);
+    let totalW = games.length * 4 + (games.length-1)*6; let startX = (160 - totalW)/2;
+    for(let i=0;i<games.length;i++){
+      let cx = startX + i*10 + 2, cy = dotY + 2;
+      if(i===selected) fillCircle(cx,cy,2,COL_WHITE); else drawCircle(cx,cy,2,COL_DARK_GRAY);
+    }
+  }
+  function drawControlHints(blink) {
+    let hintY=114; drawHLine(10,hintY-2,140,COL_DARK_GRAY);
+    ctx.font="9px 'Courier New'"; ctx.fillStyle = blink ? COL_ACCENT : COL_GRAY; ctx.fillText("A:",8,hintY+8);
+    ctx.fillStyle = COL_WHITE; ctx.fillText("Baslat",20,hintY+8);
+    ctx.fillStyle = blink ? COL_ACCENT : COL_GRAY; ctx.fillText("B:",108,hintY+8); ctx.fillStyle = COL_WHITE; ctx.fillText("Bilgi",120,hintY+8);
+  }
+
+  // ===================== STATE & LOGIC =====================
+  let state = "BOOT";
+  let bootFrame = 0;
+  let sel = 0;
+  let animTick = 0;
+  let pulseState = 0;
+
+  function renderBootloader() {
+    fillRect(0, 0, 160, 64, RGB_FIX(6, 6, 18));
+    fillRect(0, 64, 160, 64, RGB_FIX(3, 3, 10));
+    
+    let logoX = 40, logoY = 30;
+    ctx.font = "bold 16px 'Courier New'";
+    
+    let text = "E-OS";
+    for(let i=0; i<4; i++) {
+        if (bootFrame > i * 2) {
+             ctx.fillStyle = COL_WHITE;
+             ctx.fillText(text[i], logoX + i * 20, logoY + 16);
+        }
+    }
+    
+    if (bootFrame > 6) {
+        ctx.font = "8px 'Courier New'";
+        ctx.fillStyle = COL_GRAY;
+        ctx.fillText("v2.1", 70, logoY + 30);
+    }
+    
+    if (bootFrame > 8) {
+        let w = Math.min(60, (bootFrame - 8) * 8);
+        let lx = 80 - w;
+        drawHLine(lx, logoY + 30 + 5, w * 2, COL_ACCENT_DIM);
+        drawHLine(80 - w/2, logoY + 30 + 5, w, COL_ACCENT);
+    }
+    
+    let barX = 25, barY = logoY + 45, barW = 110, barH = 8;
+    if (bootFrame > 10) {
+        ctx.strokeStyle = COL_ACCENT_DIM; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 3); ctx.stroke();
+    }
+    
+    if (bootFrame > 12) {
+        let progress = Math.min(100, (bootFrame - 12) * 10);
+        let fillWidth = (barW - 4) * (progress / 100);
+        let segments = 4;
+        let segW = (barW - 4) / segments;
+        
+        for (let px = 0; px < fillWidth; px++) {
+             let pxInSeg = px % segW;
+             let bright = 120 + Math.floor((pxInSeg * 135) / segW);
+             drawVLine(barX + 2 + px, barY + 2, barH - 4, RGB_FIX(30, bright, 255));
+        }
+    }
+    
+    if (bootFrame > 22) fillRect(0,0,160,128,RGB_FIX(4,4,12));
+    if (bootFrame > 24) fillRect(0,0,160,128,COL_BLACK);
+    
+    bootFrame++;
+    if(bootFrame > 25) state = "MENU";
+  }
+
+  // Exact Match to C++ Carousel System
+  function drawCarouselFrame() {
+    fillRect(0, 0, 160, 42, RGB_FIX(10, 10, 24));
+    fillRect(0, 42, 160, 43, COL_BG_DARK);
+    fillRect(0, 85, 160, 43, RGB_FIX(5, 5, 14));
+    drawStatusBar();
+  }
+  function drawCenterCard(sel) {
+    let cx = 54, cy = 18, cardW = 52, cardH = 56;
+    let borderCol = games[sel].pri;
+    
+    // Pulse animation logic ported
+    if (pulseState === 1) borderCol = COL_WHITE;
+    else if (pulseState === 2) borderCol = COL_ACCENT;
+
+    fillRect(cx - 2, cy - 1, cardW + 4, cardH + 2, COL_BG_DARK);
+    drawRect(cx - 1, cy - 1, cardW + 2, cardH + 2, games[sel].dim);
+    drawRect(cx, cy, cardW, cardH, borderCol);
+    drawRect(cx + 1, cy + 1, cardW - 2, cardH - 2, borderCol);
+    fillRect(cx + 2, cy + 2, cardW - 4, cardH - 4, RGB_FIX(12, 12, 20));
+    games[sel].draw(cx + 2, cy + 4);
+  }
+  function drawSideCard(sel, side) {
+    let index = (sel + side + games.length) % games.length;
+    let cardW = 24, cardH = 28;
+    let cx = side === -1 ? 6 : 130;
+    let cy = 32;
+    let borderCol = games[index].dim;
+    
+    fillRect(cx - 1, cy - 1, cardW + 2, cardH + 2, COL_BG_DARK);
+    drawRect(cx, cy, cardW, cardH, borderCol);
+    fillRect(cx + 1, cy + 1, cardW - 2, cardH - 2, RGB_FIX(8, 8, 16));
+    games[index].drawSmall(cx + 2, cy + 4, borderCol);
+  }
+  function drawGameLabel(sel) {
+    fillRect(0, 78, 160, 16, COL_BG_DARK);
+    ctx.font = "bold 9px 'Courier New'";
+    let name = games[sel].label;
+    let nameW = ctx.measureText(name).width;
+    let nameX = (160 - nameW) / 2;
+    
+    ctx.fillStyle = games[sel].pri;
+    ctx.fillText(name, nameX, 87);
+    
+    let lineW = nameW + 16;
+    let lineX = (160 - lineW) / 2;
+    drawHLine(lineX, 90, lineW, games[sel].dim);
+    drawHLine(lineX + 4, 90, lineW - 8, games[sel].pri);
+  }
+
+  function renderMenu() {
+    animTick++;
+    if (animTick % 12 === 0) pulseState = (pulseState + 1) % 3;
+
+    drawCarouselFrame();
+    drawCenterCard(sel);
+    drawSideCard(sel, -1);
+    drawSideCard(sel, +1);
+    drawGameLabel(sel);
+    drawPageDots(sel);
+    drawControlHints((animTick % 30) < 15);
+  }
+
+  function loop() {
+    if(state === "BOOT") renderBootloader();
+    else renderMenu();
+    setTimeout(loop, 33);
+  }
+
+  // Interactive
+  document.querySelector('.eos-hardware').addEventListener('click', () => {
+    if (state === "MENU") {
+      sel = (sel + 1) % games.length;
+      pulseState = 0; // reset pulse
+    }
+  });
+
+  loop();
+})();
+</script>
 
 </body>
 </html>
