@@ -69,8 +69,23 @@ Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi
 
 ---
 
-## 📸 Screenshot Sistemi
-Her oyunda **BTN_D** (Doom'da **B+D**) ile ekran görüntüsü alınabilir. BMP formatında SD kartın `/screenshots/` klasörüne kaydedilir. `dev_tools.h` tarafından yönetilir.
+## 📸 Screenshot Sistemi (Geçici Olarak Kapalı)
+Oyunlarda ekran görüntüsü alma özelliği (SD Karta BMP yazdırma), **SPI veriyolu çakışması (TFT ve SD kart arası donma)** nedeniyle `dev_tools.h` üzerinden kalıcı olarak devre dışı bırakılmıştır. İlgili kayıt fonksiyonları kodlarda hala mevcuttur; gelecekte farklı bir SPI bus veya PSRAM üzerinden asenkron çözmek isteyen geliştiriciler yeniden aktifleştirip test edebilir.
+
+---
+
+## ✨ E-OS V2.1 Öne Çıkan Güncellemeleri
+- **Güvenlik & Bellek:** Tüm oyunlardaki `strcpy` zafiyetleri `strncpy` ile kapatıldı. Stack/bellek taşması riskleri engellendi (Doom TaskRadar 20KB'a çıkarıldı).
+- **OTA Koruması:** Bozuk güncelleme (.bin) dosyalarının cihazı çökertmesini engelleyen `0xE9` Magic Byte koruması eklendi.
+- **Standartlaşma:** Tüm oyunlardaki donanım pinleri (`BUZZER`, `I2C` vs.) merkezileştirildi. Ortak API kullanımı için `GameBase.h` kütüphanesi tasarlandı ve oyunların yarısına entegre edildi.
+
+---
+
+## 🤝 Katkıda Bulunmak İsteyenler İçin (Good First Issues)
+Projeyi daha da ileri taşımak isteyen geliştiriciler (contributors) için açık görevler:
+1. **[Refactor] Launcher `delay()` Temizliği:** Ana menüdeki (Launcher) buton titreşimini engellemek (debounce) için kullanılan bloke edici (blocking) `delay()` döngülerinin asenkron `millis()` tabanlı yapıya geçirilmesi (Kritik).
+2. **[Refactor] `GameBase.h` Entegrasyonu:** Kalan eski oyunların kendi içindeki ses ve ekran kapatma döngülerini bozmadan ortak `GameBase.h` sarmalayıcısına geçirilmesi.
+3. **[Refactor] Sihirli Sayılar (Magic Numbers):** Eski oyun kodlarının içindeki `0xF800` gibi ham HEX renk kodlarının `#define COL_RED` gibi okunabilir makrolara dönüştürülmesi.
 
 ---
 
