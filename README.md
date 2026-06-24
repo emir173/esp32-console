@@ -1,9 +1,8 @@
 <div align="center">
-  <img src="docs/images/cihaz 2.jpg" alt="E-OS V2.1 Console" width="600" style="border-radius: 12px;"/>
+  <img src="docs/images/hero.jpg" alt="E-OS Console" width="600" style="border-radius: 12px;"/>
   <br/><br/>
-  <h1>E-OS V2.1 — Handheld Console</h1>
-  <p><b>Sınırları Zorlayan Güç.</b></p>
-  <p>ESP32-S3 mimarisi üzerinde sıfırdan yazılmış E-OS işletim sistemi. Çift ekran, 11 oyun ve muazzam bir akıcılık.</p>
+  <h1>E-OS — ESP32-S3 El Konsolu</h1>
+  <p>ESP32-S3 tabanlı, çift ekranlı (TFT+OLED) ve FreeRTOS mimarisi üzerinde çalışan el yapımı oyun konsolu projesi.</p>
   
   <p>
     <img src="https://img.shields.io/badge/MCU-ESP32--S3-blue?style=for-the-badge&logo=espressif" alt="ESP32-S3"/>
@@ -13,79 +12,87 @@
   </p>
   
   <h3>
-    <a href="https://emir173.github.io/esp32-console/">🌐 Projenin Canlı Sunum Sitesini İnceleyin</a>
+    <a href="https://emir173.github.io/esp32-console/">🌐 Proje Web Sitesi</a>
   </h3>
 </div>
 
 ---
 
 ## 🚀 Proje Hakkında
-Sıradan bir "DIY" projesine bakmıyorsunuz. **E-OS V2.1**, mikrodenetleyici limitlerinin sonuna kadar zorlandığı, işletim sisteminden (OS) oyun motorlarına kadar her şeyin **sıfırdan** yazıldığı ve donanımla tam entegre edildiği bir mühendislik eseridir. İçinde hiçbir hazır arayüz veya emülatör bulunmaz. Her bir piksel, cihaza özel kodlanmıştır.
+Bu proje, ESP32-S3 mikrodenetleyicisi kullanılarak sıfırdan geliştirilmiş bir el konsoludur. Herhangi bir hazır arayüz veya emülatör kullanılmadan, işletim sistemi (E-OS) ve oyun motorları donanıma özel olarak C++ ile kodlanmıştır.
 
 ### ⚙️ Donanım Mimarisi
-Cihazın kalbinde 240 MHz hızında çalışan **Dual-Core ESP32-S3** bulunuyor. 
-- **Çift Ekran (Dual Display):** 
-  - *Ana Ekran:* 160x128 Renkli TFT (SPI). Tüm aksiyon ve ana UI burada akar.
-  - *İkinci Ekran:* 128x64 OLED (I2C). Cihazın tepesinde bulunur; flash bellek bilgisini, logoları, oyunlardaki en yüksek skoru ve taktiksel istatistikleri anlık olarak yansıtır.
-- **Bellek:** 16MB Flash + 8MB PSRAM OPI. Bu devasa bant genişliği sayesinde oyunlar arası geçişlerde "Frame Drop" (takılma) veya ekran yırtılması (screen-tear) yaşanmaz.
-- **Ses ve Kontrol:** Yazılımsal frekans filtreli **8-bit akustik buzzer** ve donanımsal deadzone (titreme önleyici) korumalı Analog Joystick.
+- **İşlemci:** 240 MHz hızında çalışan Dual-Core ESP32-S3.
+- **Çift Ekran:** 
+  - *Ana Ekran:* 160x128 Renkli TFT (SPI). Ana oyun akışı ve UI.
+  - *İkinci Ekran:* 128x64 OLED (I2C). Cihazın üst kısmında durum bilgileri ve skorlar için kullanılır.
+- **Bellek:** 16MB Flash + 8MB PSRAM OPI. Geniş bellek kapasitesi sayesinde akıcı bir deneyim sunar.
+- **Ses ve Kontrol:** 8-bit buzzer ve analog joystick (deadzone filtreli).
 - **Depolama:** Oyun verileri için Micro SD Kart entegrasyonu.
 
 ---
 
-## 🧠 Yazılım ve E-OS İşletim Sistemi
-Hazır kütüphanelerin aksine E-OS, doğrudan donanımla konuşur.
-* **FreeRTOS Entegrasyonu:** İşlemcinin birinci çekirdeği (Core 0) oyun mantığını ve raycasting matematiğini hesaplarken, ikinci çekirdeği (Core 1) tamamen ekranların pürüzsüz çizimine (rendering) adanmıştır.
-* **Double-Buffered UI:** Cihazın ana menüsü tam bir akıllı telefon hissiyatı verir. Dönerek açılan animasyonlu carousel menü tasarımı sayesinde oyunlar arasında hızlıca dolaşabilirsiniz.
-* **Donanımsal Duraklatma (Pause):** Hangi oyunda olursanız olun, donanımsal "Pause" butonuna bastığınızda RTOS görevleri (task) dondurulur ve oyun anında duraklatılır.
+## 🧠 Yazılım Mimarisi (E-OS)
+- **FreeRTOS:** İşlemcinin bir çekirdeği (Core 0) oyun mantığını işlerken, diğer çekirdeği (Core 1) ekran çizimi (rendering) işlemlerini yürütür.
+- **Carousel UI:** Oyunlar arası geçişler için dönerek açılan, animasyonlu bir arayüz tasarımı mevcuttur.
+- **Donanımsal Duraklatma (Pause):** RTOS görev yönetimi sayesinde oyunlar donanımsal olarak anında duraklatılabilir.
 
 ---
 
-## 🕹️ Özel Kodlanmış 11 Oyun
-Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi için yeniden inşa edilmiştir.
+## 🕹️ 11 Adet Özel Oyun
+Tüm oyunlar cihazın çözünürlüğüne ve donanım limitlerine göre optimize edilmiştir.
 
 <div align="center">
-  <img src="docs/images/doom1.jpg" width="45%" alt="Doom">
-  <img src="docs/images/space.jpg" width="45%" alt="Space Invaders">
+  <table>
+    <tr>
+      <td align="center"><img src="docs/screenshots/Doom/SCR_042.bmp" width="250"><br/><b>DOOM</b></td>
+      <td align="center"><img src="docs/screenshots/Pacman/SCR_005.bmp" width="250"><br/><b>Pac-Man</b></td>
+    </tr>
+    <tr>
+      <td align="center"><img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="250"><br/><b>Space Invaders</b></td>
+      <td align="center"><img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="250"><br/><b>Arkanoid</b></td>
+    </tr>
+  </table>
 </div>
 
-1. **DOOM (3D Raycasting):** Mikrodenetleyicilerde görmesi nadir olan, gerçek zamanlı 3D ortamlar, silah mekanikleri ve düşman yapay zekası **100+ FPS** hızında TFT ekrana akar. FreeRTOS triple-buffer + PSRAM textures.
-2. **Wire3D (Space Shooter):** Wireframe 3D uzay savaşı. 114 FPS.
-3. **Space Invaders:** Dalga dalga gelen uzaylılara karşı pürüzsüz mekanikler ve OLED ekran entegrasyonu.
-4. **Galactic Strike:** Uzay gemisi ile düşman filolarına karşı savaş.
-5. **Mode7 (Yarış):** SNES tarzı Mode 7 pseudo-3D yarış motoru.
-6. **Platformer:** Yan kaydırmalı (side-scrolling) platform macerası.
-7. **Arkanoid (Breakout):** Joystick hassasiyetinin ön planda olduğu, seviyeleri giderek zorlaşan tuğla kırma efsanesi.
-8. **Pac-Man:** Özel yapay zeka ile kodlanmış hayaletler ve klasik labirent heyecanı.
-9. **Flappy Bird:** Milisaniyelik tepkiler isteyen bağımlılık yapıcı donanım testi. 148 FPS.
-10. **Snake:** Akıcı mekanikleriyle retro yılan oyunu.
-11. **Launcher (E-OS):** Dönerek açılan animasyonlu carousel menü — PSP/PS3 tarzı UI.
+<details>
+<summary><b>📸 Tüm Oyun Listesini Görmek İçin Tıklayın</b></summary>
+<br/>
 
-<div align="center">
-  <img src="docs/images/arkanoid1.jpg" width="30%" alt="Arkanoid">
-  <img src="docs/images/pacman.jpg" width="30%" alt="Pacman">
-  <img src="docs/images/snake.jpg" width="30%" alt="Snake">
-</div>
+1. **DOOM (3D Raycasting):** 3D ortamlar ve düşman yapay zekası (FreeRTOS triple-buffer + PSRAM dokuları).
+2. **Wire3D:** Wireframe grafikli uzay savaşı.
+3. **Space Invaders:** Klasik uzaylı vurma mekanikleri ve OLED entegrasyonu.
+4. **Galactic Strike:** Uzay gemisi temalı savaş oyunu.
+5. **Mode7:** SNES tarzı pseudo-3D yarış motoru.
+6. **Platformer:** Yan kaydırmalı (side-scrolling) platform oyunu.
+7. **Arkanoid:** Joystick kontrollü tuğla kırma oyunu.
+8. **Pac-Man:** Özel yapay zekaya sahip hayaletler ve klasik labirent.
+9. **Flappy Bird:** Zamanlama odaklı beceri oyunu.
+10. **Snake:** Klasik yılan oyunu.
+11. **Launcher (E-OS):** Konsolun ana işletim sistemi ve menü arayüzü.
+
+*(Tüm oyunların tam boyutlu ekran görüntüleri detaylı inceleme için `docs/screenshots/` klasörü altında listelenmiştir).*
+</details>
 
 ---
 
 ## 📸 Screenshot Sistemi (Geçici Olarak Kapalı)
-Oyunlarda ekran görüntüsü alma özelliği (SD Karta BMP yazdırma), **SPI veriyolu çakışması (TFT ve SD kart arası donma)** nedeniyle `dev_tools.h` üzerinden kalıcı olarak devre dışı bırakılmıştır. İlgili kayıt fonksiyonları kodlarda hala mevcuttur; gelecekte farklı bir SPI bus veya PSRAM üzerinden asenkron çözmek isteyen geliştiriciler yeniden aktifleştirip test edebilir.
+Oyunlarda ekran görüntüsü alma özelliği (SD Karta BMP yazdırma), **SPI veriyolu çakışması (TFT ve SD kart arası donma)** nedeniyle `dev_tools.h` üzerinden kalıcı olarak devre dışı bırakılmıştır. İlgili kayıt fonksiyonları kodlarda mevcuttur; ilgilenen geliştiriciler asenkron bir çözüm üzerinde çalışabilir.
 
 ---
 
-## ✨ E-OS V2.1 Öne Çıkan Güncellemeleri
-- **Güvenlik & Bellek:** Tüm oyunlardaki `strcpy` zafiyetleri `strncpy` ile kapatıldı. Stack/bellek taşması riskleri engellendi (Doom TaskRadar 20KB'a çıkarıldı).
-- **OTA Koruması:** Bozuk güncelleme (.bin) dosyalarının cihazı çökertmesini engelleyen `0xE9` Magic Byte koruması eklendi.
-- **Standartlaşma:** Tüm oyunlardaki donanım pinleri (`BUZZER`, `I2C` vs.) merkezileştirildi. Ortak API kullanımı için `GameBase.h` kütüphanesi tasarlandı ve oyunların yarısına entegre edildi.
+## ✨ Öne Çıkan Özellikler
+- **Güvenlik & Bellek:** Kod genelindeki bellek zafiyetleri temizlendi, stack limitleri artırıldı.
+- **OTA Koruması:** Bozuk dosya güncellemelerini engelleyen Magic Byte koruması eklendi.
+- **Standartlaşma:** Donanım pinleri merkezileştirildi. Ortak API kullanımı için `GameBase.h` sarmalayıcısı oluşturuldu.
 
 ---
 
 ## 🤝 Katkıda Bulunmak İsteyenler İçin (Good First Issues)
-Projeyi daha da ileri taşımak isteyen geliştiriciler (contributors) için açık görevler:
-1. **[Refactor] Launcher `delay()` Temizliği:** Ana menüdeki (Launcher) buton titreşimini engellemek (debounce) için kullanılan bloke edici (blocking) `delay()` döngülerinin asenkron `millis()` tabanlı yapıya geçirilmesi (Kritik).
-2. **[Refactor] `GameBase.h` Entegrasyonu:** Kalan eski oyunların kendi içindeki ses ve ekran kapatma döngülerini bozmadan ortak `GameBase.h` sarmalayıcısına geçirilmesi.
-3. **[Refactor] Sihirli Sayılar (Magic Numbers):** Eski oyun kodlarının içindeki `0xF800` gibi ham HEX renk kodlarının `#define COL_RED` gibi okunabilir makrolara dönüştürülmesi.
+Projeyi geliştirmek isteyenler için açık görevler:
+1. **[Refactor] Launcher `delay()` Temizliği:** Ana menüdeki buton okumalarında kullanılan `delay()` döngülerinin asenkron `millis()` tabanlı yapıya geçirilmesi.
+2. **[Refactor] `GameBase.h` Entegrasyonu:** Kalan eski oyunların ortak `GameBase.h` mimarisine geçirilmesi.
+3. **[Refactor] Sihirli Sayılar (Magic Numbers):** Eski oyunlardaki ham HEX renk kodlarının (örn. `0xF800`) okunabilir makrolara dönüştürülmesi.
 
 ---
 
@@ -94,24 +101,23 @@ Projeyi daha da ileri taşımak isteyen geliştiriciler (contributors) için aç
 ### Gerekli Kütüphaneler
 - `TFT_eSPI` — TFT ekran sürücüsü (ST7735)
 - `U8g2` — OLED ekran sürücüsü (SH1106)
-- `SD` — SD kart erişimi (Arduino core dahil)
-- `Preferences` — NVS yüksek skor kaydı (Arduino core dahil)
+- `SD` — SD kart erişimi
+- `Preferences` — NVS yüksek skor kaydı
 
 ### Kurulum Adımları
 1. **TFT_eSPI kurulumu:** `User_Setup.h` dosyasını TFT_eSPI kütüphane klasörüne kopyalayın:
    ```
    Windows: C:\Users\<kullanıcı>\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
    ```
-2. **Partitions:** Her oyun klasöründe `partitions.csv` dosyası mevcuttur (16MB Flash, OTA + SPIFFS).
+2. **Partitions:** Her oyun klasöründe bulunan `partitions.csv` dosyasını kullanın.
 3. **Board ayarları (Arduino IDE):**
    - Board: **ESP32S3 Dev Module**
    - Flash Size: **16MB (128Mb)**
    - PSRAM: **OPI 8MB**
-   - Partition Scheme: **Custom** (partitions.csv otomatik kullanılır)
+   - Partition Scheme: **Custom** (partitions.csv)
 4. **Derleme:** Her oyun kendi klasöründe ayrı bir `.ino` dosyası olarak derlenir. `launcher.ino` ana OS'tir.
 
 ### Pin Bağlantıları
-Pin tanımları `hardware_config.h` dosyasında merkezi olarak tanımlıdır.
 
 | Pin | İşlev |
 |-----|-------|
@@ -134,5 +140,5 @@ Pin tanımları `hardware_config.h` dosyasında merkezi olarak tanımlıdır.
 
 ---
 <div align="center">
-  <i>E-OS V2.1 Konsol Projesi | Sıfırdan Kodlandı</i>
+  <i>E-OS Konsol Projesi</i>
 </div>
