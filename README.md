@@ -44,43 +44,43 @@ Tüm oyunlar cihazın çözünürlüğüne ve donanım limitlerine göre optimiz
 
 <table>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Doom/SCR_042.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Doom/SCR_042.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>DOOM (3D Raycasting):</b> 3D ortamlar ve düşman yapay zekası (FreeRTOS triple-buffer + PSRAM dokuları).</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Wire%203D/SCR_001.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Wire%203D/1.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Wire3D:</b> Wireframe grafikli uzay savaşı.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Space Invaders:</b> Klasik uzaylı vurma mekanikleri ve OLED entegrasyonu.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Galacticstrike/SCR_034.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Galacticstrike/SCR_036.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Galactic Strike:</b> Uzay gemisi temalı savaş oyunu.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Mode%207/SCR_031.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Mode%207/SCR_031.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Mode7:</b> SNES tarzı pseudo-3D yarış motoru.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Platformer/SCR_026.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Platformer/SCR_030.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Platformer:</b> Yan kaydırmalı (side-scrolling) platform oyunu.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Arkanoid:</b> Joystick kontrollü tuğla kırma oyunu.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Pacman/SCR_005.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Pacman/SCR_005.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Pac-Man:</b> Özel yapay zekaya sahip hayaletler ve klasik labirent.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Flappy/SCR_001.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Flappy/SCR_008.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Flappy Bird:</b> Zamanlama odaklı beceri oyunu.</td>
   </tr>
   <tr>
-    <td width="160" align="center"><img src="docs/screenshots/Snake/SCR_004.bmp" width="140" style="border-radius: 6px;"></td>
+    <td width="200" align="center"><img src="docs/screenshots/Snake/SCR_004.bmp" width="180" style="border-radius: 6px;"></td>
     <td valign="middle"><b>Snake:</b> Klasik yılan oyunu.</td>
   </tr>
 </table>
