@@ -43,16 +43,11 @@ Bu proje, ESP32-S3 mikrodenetleyicisi kullanılarak sıfırdan geliştirilmiş b
 Tüm oyunlar cihazın çözünürlüğüne ve donanım limitlerine göre optimize edilmiştir.
 
 <div align="center">
-  <table>
-    <tr>
-      <td align="center"><img src="docs/screenshots/Doom/SCR_042.bmp" width="250"><br/><b>DOOM</b></td>
-      <td align="center"><img src="docs/screenshots/Pacman/SCR_005.bmp" width="250"><br/><b>Pac-Man</b></td>
-    </tr>
-    <tr>
-      <td align="center"><img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="250"><br/><b>Space Invaders</b></td>
-      <td align="center"><img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="250"><br/><b>Arkanoid</b></td>
-    </tr>
-  </table>
+  <img src="docs/screenshots/Doom/SCR_042.bmp" width="48%" title="DOOM" style="border-radius: 5px;">
+  <img src="docs/screenshots/Pacman/SCR_005.bmp" width="48%" title="Pac-Man" style="border-radius: 5px;">
+  <br>
+  <img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="48%" title="Space Invaders" style="border-radius: 5px;">
+  <img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="48%" title="Arkanoid" style="border-radius: 5px;">
 </div>
 
 <details>
