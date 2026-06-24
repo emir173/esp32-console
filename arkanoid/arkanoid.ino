@@ -12,24 +12,13 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <esp_ota_ops.h>
+#include <U8g2lib.h>
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #include <math.h>
 #include <Preferences.h>
-
-// ============ Pin Tanımları ============
-#define JOY_X    1
-#define JOY_Y    2
-#define BTN_A    3
-#define BTN_B    21
-#define BTN_C    4      // OS'a dönüş (her zaman rezerve)
-#define BTN_D    6
-#define BUZZER   5
-#define JOY_SW   18
-
-// ============ SPI Pinleri ============
-#define SPI_SCK  12
-#define SPI_MOSI 11
-#define SPI_MISO 42
+#include "../hardware_config.h"
+#include "../dev_tools.h"
+#include "../GameBase.h"
 
 // ============ Ekran Boyutları (Landscape) ============
 #define SCR_W  160
@@ -52,16 +41,19 @@
 
 // ============ Top Sabitleri ============
 #define BALL_R        3       // Top yarıçapı
-#define BASE_BALL_SPD 2.3f    // Başlangıç top hızı
-#define MAX_BALL_SPD  3.8f    // Maksimum top hızı
+// FPS60: Top hızları piksel/saniye cinsine çevrildi (orijinal piksel/kare × 30)
+#define BASE_BALL_SPD 69.0f   // Başlangıç top hızı (2.3 × 30 = 69 piksel/sn)
+#define MAX_BALL_SPD  114.0f  // Maksimum top hızı (3.8 × 30 = 114 piksel/sn)
 
 // ============ Genel Sabitler ============
 #define HUD_H         10      // Üst bilgi çubuğu yüksekliği
 #define DEADZONE      300     // Joystick ölü bölge
 #define START_LIVES   3       // Başlangıç canı
 #define MAX_PARTICLES 20      // Parçacık efekti havuzu
-#define TARGET_FPS    30
+// FPS60: Delta-Time sistemine geçildi, frame kilidi kaldırıldı
+#define TARGET_FPS    60
 #define FRAME_MS      (1000 / TARGET_FPS)
+#define MAX_DT        0.05f   // FPS60: dt üst sınırı (lag spike koruması)
 
 // ============ Özel Renkler (RGB565) ============
 #define COL_BG        0x0008  // Koyu lacivert arka plan
@@ -73,6 +65,8 @@
 #define COL_HUD_LINE  0x2104  // HUD ayırıcı çizgi
 #define COL_HUD_TEXT  0xBDF7  // HUD metin rengi
 #define COL_WALL      0x2945  // Duvar çerçeve rengi
+#define COL_TITLE_SHADOW 0x0010  // Başlık gölge rengi
+#define COL_RED_DARK     0x8000  // Koyu kırmızı (game over panel iç çerçeve)
 
 // Tuğla renkleri (satır bazlı — üstten alta)
 const uint16_t BRICK_COLORS[] = {
@@ -120,7 +114,7 @@ float paddleX;
 struct Particle {
     float x, y, vx, vy;
     uint16_t color;
-    int life;
+    float life;     // FPS60: int → float (dt tabanlı azalma için)
     bool active;
 };
 Particle particles[MAX_PARTICLES];
@@ -134,6 +128,11 @@ unsigned long lastFrameMs;
 unsigned long gameOverMs;
 unsigned long waveClearMs;
 
+// ============ FPS Sayacı ============
+uint32_t fpsFrameCount = 0;
+uint32_t fpsStartTime = 0;
+int currentFPS = 0;
+
 // ============ Joystick ============
 int joyCenterX;
 
@@ -142,23 +141,16 @@ int prevBtnA = HIGH;
 
 // ============ V2.1: Ses Ayarı ============
 bool soundEnabled = true;
+// playSound — GameBase.h osPlaySound wrapper (eski API uyumu)
 void playSound(uint16_t freq, uint32_t dur) {
-    if (soundEnabled) { tone(BUZZER, freq, dur); }
+    osPlaySound(freq, dur, soundEnabled);
 }
 
 // ==========================================
-//  OS'a Dönüş Fonksiyonu
+//  OS'a Dönüş Fonksiyonu — GameBase.h wrapper
 // ==========================================
 void returnToOS() {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(10, 60);
-    tft.print("Ana Menuye Donuluyor...");
-    delay(500);
-    const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
-    if (os_part) { esp_ota_set_boot_partition(os_part); }
-    ESP.restart();
+    osReturnToOS(tft);
 }
 
 // ==========================================
@@ -184,7 +176,8 @@ void clearParticles() {
 // ==========================================
 void resetBall() {
     ballStuck = true;
-    ballSpeed = BASE_BALL_SPD + (wave - 1) * 0.15f;
+    // FPS60: Dalga başına hız artışı piksel/sn cinsine çevrildi (0.15 × 30 = 4.5)
+    ballSpeed = BASE_BALL_SPD + (wave - 1) * 4.5f;
     if (ballSpeed > MAX_BALL_SPD) ballSpeed = MAX_BALL_SPD;
     ballX = paddleX;
     ballY = PADDLE_Y - BALL_R - 1;
@@ -232,10 +225,11 @@ void spawnParticles(float x, float y, uint16_t color, int count) {
         if (!particles[i].active) {
             particles[i].x = x;
             particles[i].y = y;
-            particles[i].vx = random(-25, 25) / 10.0f;
-            particles[i].vy = random(-20, 8) / 10.0f;
+            // FPS60: Hızlar piksel/saniye cinsine çevrildi (orijinal × 30)
+            particles[i].vx = random(-25, 25) * 3.0f;   // -75 ~ 72 piksel/sn
+            particles[i].vy = random(-20, 8) * 3.0f;    // -60 ~ 21 piksel/sn
             particles[i].color = color;
-            particles[i].life = random(8, 18);
+            particles[i].life = (float)random(8, 18);   // FPS60: float cast (dt tabanlı azalma)
             particles[i].active = true;
             count--;
         }
@@ -243,16 +237,17 @@ void spawnParticles(float x, float y, uint16_t color, int count) {
 }
 
 // ==========================================
-//  Parçacık Efekti: Güncelle
+//  Parçacık Efekti: Güncelle (FPS60: dt parametresi eklendi)
 // ==========================================
-void updateParticles() {
+void updateParticles(float dt) {
     for (int i = 0; i < MAX_PARTICLES; i++) {
         if (!particles[i].active) continue;
-        particles[i].x += particles[i].vx;
-        particles[i].y += particles[i].vy;
-        particles[i].vy += 0.15f;   // Yerçekimi
-        particles[i].life--;
-        if (particles[i].life <= 0 ||
+        // FPS60: Tüm hareketler dt ile çarpıldı
+        particles[i].x += particles[i].vx * dt;
+        particles[i].y += particles[i].vy * dt;
+        particles[i].vy += 4.5f * dt;       // FPS60: Yerçekimi piksel/sn² (0.15 × 30 = 4.5)
+        particles[i].life -= 30.0f * dt;    // FPS60: Zaman tabanlı ömür (30fps mantıksal kare)
+        if (particles[i].life <= 0.0f ||
             particles[i].x < 0 || particles[i].x >= SCR_W ||
             particles[i].y >= SCR_H) {
             particles[i].active = false;
@@ -289,8 +284,8 @@ void drawBrick(int row, int col) {
     canvas.drawFastHLine(bx, by, BRICK_W - 1, hl);
     canvas.drawFastVLine(bx, by, BRICK_H - 1, hl);
     // Alt ve sağ kenar gölge
-    canvas.drawFastHLine(bx + 1, by + BRICK_H - 1, BRICK_W - 1, 0x0000);
-    canvas.drawFastVLine(bx + BRICK_W - 1, by + 1, BRICK_H - 1, 0x0000);
+    canvas.drawFastHLine(bx + 1, by + BRICK_H - 1, BRICK_W - 1, TFT_BLACK);
+    canvas.drawFastVLine(bx + BRICK_W - 1, by + 1, BRICK_H - 1, TFT_BLACK);
 }
 
 // ==========================================
@@ -340,6 +335,17 @@ void drawHUD() {
     canvas.setTextColor(TFT_YELLOW);
     canvas.print(wave);
 
+    // FPS Sayacı (Canlar'dan hemen önce, sağa dayalı)
+    char fpsStr[10];
+    sprintf(fpsStr, "FPS:%d", currentFPS);
+    int fpsWidth = strlen(fpsStr) * 6;
+    
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(128 - fpsWidth, 1);
+    canvas.print("FPS:");
+    canvas.setTextColor(TFT_GREEN);
+    canvas.print(currentFPS);
+
     // Canlar (sağ taraf — küçük toplar)
     for (int i = 0; i < lives; i++) {
         canvas.fillCircle(SCR_W - 6 - i * 10, 5, 3, COL_BALL);
@@ -367,12 +373,12 @@ void drawMenu() {
 
     // Başlık gölgesi
     canvas.setTextSize(2);
-    canvas.setTextColor(0x0010);
-    canvas.setCursor(21, 7);
+    canvas.setTextColor(COL_TITLE_SHADOW);
+    canvas.setCursor(33, 7);
     canvas.print("ARKANOID");
     // Başlık
     canvas.setTextColor(TFT_CYAN);
-    canvas.setCursor(20, 6);
+    canvas.setCursor(32, 6);
     canvas.print("ARKANOID");
 
     // Dekoratif tuğlalar
@@ -391,29 +397,31 @@ void drawMenu() {
     int demoPY = 64;
     canvas.fillRect(demoPX - PADDLE_W / 2, demoPY, PADDLE_W, PADDLE_H, COL_PADDLE);
     canvas.drawFastHLine(demoPX - PADDLE_W / 2, demoPY, PADDLE_W, COL_PADDLE_HL);
-    // Top (animasyonlu yukarı-aşağı)
+    // Top (animasyonlu yukarı-aşağı — millis() tabanlı, dt'den bağımsız)
     float demoBy = 58.0f + sin(millis() / 200.0f) * 3.0f;
     canvas.fillCircle(demoPX, (int)demoBy, BALL_R, COL_BALL);
 
-    // Talimatlar
+    // Alt Menuler (Iki kolon, derli toplu)
     canvas.setTextSize(1);
+    
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(22, 78);
-    canvas.print("[JOY] Cubuk Hareket");
-    canvas.setCursor(22, 90);
-    canvas.print("[A] Topu Firlat");
-    canvas.setTextColor(0xBDF7);
-    canvas.setCursor(22, 106);
+    canvas.setCursor(10, 90);
+    canvas.print("[A] Basla");
+
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(90, 90);
     canvas.print("[B] OS Menu");
 
-    // En yüksek skor
-    if (highScore > 0) {
-        canvas.setTextColor(TFT_YELLOW);
-        canvas.setCursor(22, 118);
-        canvas.print("Rekor: ");
-        canvas.print(highScore);
-    }
+    canvas.setTextColor(TFT_GREEN);
+    canvas.setCursor(10, 106);
+    canvas.print("[JOY] Hareket");
 
+    // En yüksek skor
+    canvas.setTextColor(TFT_YELLOW);
+    canvas.setCursor(92, 106);
+    canvas.printf("Rekor: %d", highScore);
+
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -447,6 +455,7 @@ void drawWaveClear() {
         canvas.fillRect(px, py, 3, 3, pc);
     }
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -457,57 +466,63 @@ void drawGameOver() {
     canvas.fillSprite(COL_BG);
 
     // Panel
-    canvas.fillRoundRect(15, 12, 130, 104, 5, 0x2104);
-    canvas.drawRoundRect(15, 12, 130, 104, 5, TFT_RED);
-    canvas.drawRoundRect(16, 13, 128, 102, 4, 0x8000);
+    canvas.fillRoundRect(15, 6, 130, 120, 5, COL_HUD_LINE);
+    canvas.drawRoundRect(15, 6, 130, 120, 5, TFT_RED);
+    canvas.drawRoundRect(16, 7, 128, 118, 4, COL_RED_DARK);
 
     // Başlık
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_RED);
-    canvas.setCursor(20, 20);
+    canvas.setCursor(22, 12);
     canvas.print("OYUN BITTI");
 
     // Skor
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(30, 48);
+    canvas.setCursor(30, 40);
     canvas.print("Skor:  ");
     canvas.setTextColor(TFT_YELLOW);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 36);
     canvas.print(score);
 
     // Dalga
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(30, 65);
+    canvas.setCursor(30, 60);
     canvas.print("Dalga: ");
     canvas.setTextColor(TFT_CYAN);
+    canvas.setTextSize(2);
+    canvas.setCursor(75, 56);
     canvas.print(wave);
 
     // Rekor
+    canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(30, 78);
+    canvas.setCursor(30, 80);
     canvas.print("Rekor: ");
     canvas.setTextColor(TFT_GREEN);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 76);
     canvas.print(highScore);
 
     // Yeni rekor bildirimi
     if (newRecord) {
         canvas.setTextSize(1);
         canvas.setTextColor(TFT_MAGENTA);
-        canvas.setCursor(28, 94);
-        canvas.print("** YENI REKOR! **");
+        canvas.setCursor(47, 94);
+        canvas.print("YENI REKOR!");
     }
 
     canvas.setTextSize(1);
-    canvas.setTextColor(0xBDF7);
+    canvas.setTextColor(COL_HUD_TEXT);
     canvas.setCursor(30, 104);
     canvas.print("[A] Tekrar Oyna");
     
-    canvas.setCursor(30, 116);
+    canvas.setCursor(30, 114);
     canvas.print("[B] OS Menu");
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -516,8 +531,8 @@ void drawGameOver() {
 // ==========================================
 void setup() {
     // OLED Kapatma ve Buzzer Susturma (Hızlı Başlatma için)
-    pinMode(5, OUTPUT);
-    digitalWrite(5, LOW);
+    pinMode(BUZZER, OUTPUT);
+    digitalWrite(BUZZER, LOW);
     Wire.begin(8, 9);
     Wire.beginTransmission(0x3C);
     Wire.write(0x00);
@@ -542,9 +557,17 @@ void setup() {
     // SPI başlat
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, -1);
 
+    initDevTools(tft);
+
     // Ekran başlatma
     tft.init();
     tft.setRotation(1);   // Landscape: 160x128
+    // TFT donanimini RGB moduna gecir (standart RGB565 sabitler icin)
+    tft.startWrite();
+    tft.writecommand(0x36);  // MADCTL
+    tft.writedata(0xA0);     // MY|MV, BGR bit kapali (RGB modu)
+    tft.endWrite();
+    setScreenshotMode(SCR_RGB_SWAP);
     tft.fillScreen(TFT_BLACK);
 
     // Sprite tamponu (çift tamponlama / flicker-free)
@@ -560,6 +583,7 @@ void setup() {
     clearParticles();
     state = MENU;
     lastFrameMs = millis();
+    fpsStartTime = millis();
 }
 
 // ==========================================
@@ -577,15 +601,29 @@ void loop() {
     }
     prevJoySw = currJoySw;
 
-    // ---- Frame hız kontrolü ----
+    // ---- FPS60: Delta-Time sistemi (frame kilidi kaldırıldı, soft cap 60fps) ----
     unsigned long now = millis();
-    if (now - lastFrameMs < FRAME_MS) return;
+    unsigned long frameDelta = now - lastFrameMs;
+    if (frameDelta < FRAME_MS) {
+        delay(1);   // FPS60: FreeRTOS'a yield et, CPU'yu boşa yakma
+        return;
+    }
+    float dt = frameDelta / 1000.0f;
+    if (dt > MAX_DT) dt = MAX_DT;   // FPS60: Lag spike koruması (max 50ms)
     lastFrameMs = now;
 
     // ---- BTN_A: Kenar tespiti ----
     int btnA = digitalRead(BTN_A);
     bool pressA = (btnA == LOW && prevBtnA == HIGH);
     prevBtnA = btnA;
+
+    // ---- FPS Hesaplama ----
+    fpsFrameCount++;
+    if (now - fpsStartTime >= 1000) {
+        currentFPS = fpsFrameCount;
+        fpsFrameCount = 0;
+        fpsStartTime = now;
+    }
 
     // ---- Durum Makinesi ----
     switch (state) {
@@ -600,7 +638,7 @@ void loop() {
                 resetGame();
             }
             if (!digitalRead(BTN_B)) {
-                delay(200);
+                delay(100);   // FPS60: Debounce 200→100ms
                 returnToOS();
             }
             break;
@@ -616,8 +654,9 @@ void loop() {
             if (abs(jx) > DEADZONE) {
                 float factor = (float)(abs(jx) - DEADZONE) / (float)(2048 - DEADZONE);
                 if (factor > 1.0f) factor = 1.0f;
-                float spd = 1.2f + factor * 3.0f;   // 1.2 ~ 4.2 piksel/kare
-                paddleX += (jx > 0) ? spd : -spd;
+                // FPS60: Çubuk hızı piksel/sn cinsine çevrildi (1.2~4.2 × 30 = 36~126)
+                float spd = 36.0f + factor * 90.0f;   // 36 ~ 126 piksel/sn
+                paddleX += (jx > 0 ? spd : -spd) * dt; // FPS60: dt ile çarp
             }
             // Ekran sınırları
             float halfW = PADDLE_W / 2.0f;
@@ -642,8 +681,9 @@ void loop() {
             }
             else {
                 // === Top Hareketini Güncelle ===
-                ballX += ballVX;
-                ballY += ballVY;
+                // FPS60: Hareket dt ile çarpıldı
+                ballX += ballVX * dt;
+                ballY += ballVY * dt;
 
                 // --- Sol duvar çarpışması ---
                 if (ballX - BALL_R <= 1) {
@@ -714,8 +754,9 @@ void loop() {
                             playSound(1000 + (BRICK_ROWS - 1 - r) * 200, 35);
 
                             // Sekme yönünü belirle (önceki pozisyona bakarak)
-                            float prevBX = ballX - ballVX;
-                            float prevBY = ballY - ballVY;
+                            // FPS60: Önceki konum dt dikkate alınarak hesaplandı
+                            float prevBX = ballX - ballVX * dt;
+                            float prevBY = ballY - ballVY * dt;
                             bool wasOutV = (prevBY + BALL_R <= by || prevBY - BALL_R >= by + BRICK_H);
                             bool wasOutH = (prevBX + BALL_R <= bx || prevBX - BALL_R >= bx + BRICK_W);
 
@@ -738,7 +779,7 @@ void loop() {
                 if (ballY - BALL_R > SCR_H) {
                     lives--;
                     playSound(200, 200);
-                    delay(100);
+                    delay(80);                  // FPS60: Azaltıldı (100→80ms)
                     playSound(100, 300);
 
                     if (lives <= 0) {
@@ -754,7 +795,7 @@ void loop() {
                         break;
                     } else {
                         // Canı azalt, topu sıfırla
-                        delay(300);
+                        delay(250);              // FPS60: Azaltıldı (300→250ms)
                         resetBall();
                     }
                 }
@@ -773,7 +814,7 @@ void loop() {
             }
 
             // === Parçacık güncellemesi ===
-            updateParticles();
+            updateParticles(dt);   // FPS60: dt parametresi geçildi
 
             // ============================
             //  SAHNE ÇİZİMİ (Sprite'a)
@@ -805,11 +846,12 @@ void loop() {
             if (ballStuck) {
                 canvas.setTextSize(1);
                 canvas.setTextColor(0xBDF7);
-                canvas.setCursor(35, SCR_H - 5);
+                canvas.setCursor(47, 85);
                 canvas.print("[A] Firlat!");
             }
 
             // Sprite'ı ekrana bas
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             break;
         }
@@ -854,27 +896,31 @@ void loop() {
                         drawBrick(r, c);
             
             // Üzerine karartma ve menü
-            canvas.fillRect(30, 40, 100, 50, COL_BG);
-            canvas.drawRect(30, 40, 100, 50, COL_HUD_TEXT);
+            canvas.fillRect(30, 36, 100, 56, canvas.color565(10, 10, 15));
+            canvas.drawRect(30, 36, 100, 56, TFT_GREEN);
+            
+            canvas.setTextSize(2);
+            canvas.setTextColor(TFT_YELLOW);
+            canvas.setCursor(50, 42); canvas.print("PAUSE");
             
             canvas.setTextSize(1);
             canvas.setTextColor(TFT_WHITE);
-            canvas.setCursor(65, 48); canvas.print("PAUSE");
-            canvas.setTextColor(COL_HUD_TEXT);
-            canvas.setCursor(42, 62); canvas.print("[A] Devam Et");
-            canvas.setCursor(42, 74); canvas.print("[B] OS Menu");
+            canvas.setCursor(44, 64); canvas.print("[A] Devam Et");
+            canvas.setTextColor(canvas.color565(180, 180, 180));
+            canvas.setCursor(47, 78); canvas.print("[B] OS Menu");
             
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             
             if (!digitalRead(BTN_A)) {
                 playSound(800, 50);
-                delay(200);
+                delay(100);   // FPS60: Debounce 200→100ms
                 state = PLAYING;
                 lastFrameMs = millis();
             }
             if (!digitalRead(BTN_B)) {
                 playSound(400, 50);
-                delay(200);
+                delay(100);   // FPS60: Debounce 200→100ms
                 returnToOS();
             }
             break;

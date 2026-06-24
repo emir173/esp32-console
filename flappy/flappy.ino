@@ -1,5 +1,5 @@
 // ============================================================
-//  EMİR OS — FLAPPY BIRD
+//  EMİR OS — FLAPPY BIRD (60 FPS Delta-Time Edition)
 //  160x128 TFT LCD (Landscape) | ST7735 | TFT_eSPI
 //  Sprite tabanlı çift tamponlama (Flicker-Free)
 //
@@ -11,23 +11,12 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <esp_ota_ops.h>
+#include <U8g2lib.h>
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #include <Preferences.h>
-
-// ============ Pin Tanımları ============
-#define JOY_X    1
-#define JOY_Y    2
-#define BTN_A    3
-#define BTN_B    21
-#define BTN_C    4     // OS'a dönüş (her zaman rezerve)
-#define BTN_D    6
-#define BUZZER   5
-#define JOY_SW   18
-
-// ============ SPI Pinleri ============
-#define SPI_SCK  12
-#define SPI_MOSI 11
-#define SPI_MISO 42
+#include "../hardware_config.h"
+#include "../dev_tools.h"
+#include "../GameBase.h"
 
 // ============ Ekran Boyutları (Landscape) ============
 #define SCR_W  160
@@ -36,18 +25,22 @@
 // ============ Oyun Sabitleri ============
 #define BIRD_X       25        // Kuşun sabit X pozisyonu
 #define BIRD_R       5         // Kuş yarıçapı
-#define GRAVITY      0.4f      // Yerçekimi ivmesi
-#define JUMP_VEL    -3.0f      // Zıplama hızı (negatif = yukarı)
+// FPS60: Yerçekimi piksel/saniye^2 cinsinden (0.4 * 30 * 30 = 360)
+#define GRAVITY      360.0f    // Yerçekimi ivmesi (piksel/sn²)
+// FPS60: Zıplama hızı piksel/saniye cinsinden (-3.0 * 30 = -90)
+#define JUMP_VEL    -90.0f     // Zıplama hızı (piksel/sn, negatif = yukarı)
 #define PIPE_W       16        // Boru genişliği
 #define PIPE_GAP     36        // Borular arası dikey boşluk
-#define BASE_SPEED   1.5f      // Başlangıç boru hızı
-#define MAX_SPEED    3.2f      // Maksimum boru hızı
+// FPS60: Boru hızı piksel/saniye cinsinden (1.5 * 30 = 45)
+#define BASE_SPEED   45.0f     // Başlangıç boru hızı (piksel/sn)
+// FPS60: Maksimum boru hızı piksel/saniye cinsinden (3.2 * 30 = 96)
+#define MAX_SPEED    96.0f     // Maksimum boru hızı (piksel/sn)
 #define NUM_PIPES    3         // Ekrandaki boru sayısı
 #define PIPE_DIST    56        // Borular arası yatay mesafe
 #define GROUND_H     12        // Zemin yüksekliği
 #define GROUND_Y     (SCR_H - GROUND_H)  // Zemin Y koordinatı
-#define TARGET_FPS   30
-#define FRAME_MS     (1000 / TARGET_FPS)
+// FPS60: TARGET_FPS sadece referans, frame kilidi kaldırıldı (Delta-Time kullanılıyor)
+#define TARGET_FPS   60
 
 // ============ Özel Renkler (RGB565) ============
 // Gökyüzü: Açık mavi (100, 180, 255) -> 0x65BF
@@ -68,6 +61,9 @@
 #define COL_GRASS     0x07E0
 // Panel arka plan
 #define COL_PANEL     0x2104
+#define COL_HUD_TEXT  0xBDF7  // Açık gri (menü yazıları)
+#define COL_FLAPPY_SHADOW 0x4208  // Başlık gölge rengi (flappy özel)
+#define COL_RED_DARK       0x8000  // Koyu kırmızı (game over panel iç çerçeve)
 
 // ============ Nesneler ============
 TFT_eSPI tft = TFT_eSPI();
@@ -97,31 +93,29 @@ bool newRecord = false;
 unsigned long lastFrameMs = 0;
 unsigned long gameOverMs  = 0;
 
+// ============ FPS Sayacı ============
+uint32_t fpsFrameCount = 0;
+uint32_t fpsStartTime = 0;
+int currentFPS = 0;
+
 // Buton durumu (edge detection)
 int prevBtnA = HIGH;
 
 // V2.1: Ses Ayarı
 bool soundEnabled = true;
+// playSound — GameBase.h osPlaySound wrapper (eski API uyumu)
 void playSound(uint16_t freq, uint32_t dur) {
-    if (soundEnabled) { tone(BUZZER, freq, dur); }
+    osPlaySound(freq, dur, soundEnabled);
 }
 
-// Bulut animasyonu
-int cloudOffset = 0;
+// FPS60: Bulut offset float tipine çevrildi (delta-time ile kesirli birikim için)
+float cloudOffset = 0.0f;
 
 // ==========================================
-//  OS'a Dönüş Fonksiyonu
+//  OS'a Dönüş Fonksiyonu — GameBase.h wrapper
 // ==========================================
 void returnToOS() {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(10, 60);
-    tft.print("Ana Menuye Donuluyor...");
-    delay(500);
-    const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
-    if (os_part) { esp_ota_set_boot_partition(os_part); }
-    ESP.restart();
+    osReturnToOS(tft);
 }
 
 // ==========================================
@@ -143,7 +137,7 @@ void resetGame() {
     birdVel = 0;
     score   = 0;
     newRecord = false;
-    cloudOffset = 0;
+    cloudOffset = 0.0f; // FPS60: float sıfırlama
     initPipes();
     state = PLAYING;
 }
@@ -151,23 +145,24 @@ void resetGame() {
 // ==========================================
 //  Çizim: Kuş
 // ==========================================
-void drawBird(int y) {
+void drawBird(int x, int y) {
     // Gövde (sarı daire)
-    canvas.fillCircle(BIRD_X, y, BIRD_R, COL_BIRD);
+    canvas.fillCircle(x, y, BIRD_R, COL_BIRD);
 
     // Kanat (hıza göre pozisyon değişir)
+    // FPS60: birdVel artık piksel/sn cinsinden, < 0 kontrolü çalışmaya devam eder
     int wingY = y + (birdVel < 0 ? 2 : -1);
-    canvas.fillCircle(BIRD_X - 3, wingY, 3, COL_WING);
+    canvas.fillCircle(x - 3, wingY, 3, COL_WING);
 
     // Göz
-    canvas.fillCircle(BIRD_X + 3, y - 2, 2, TFT_WHITE);
-    canvas.fillCircle(BIRD_X + 4, y - 2, 1, TFT_BLACK);
+    canvas.fillCircle(x + 3, y - 2, 2, TFT_WHITE);
+    canvas.fillCircle(x + 4, y - 2, 1, TFT_BLACK);
 
     // Gaga
     canvas.fillTriangle(
-        BIRD_X + BIRD_R, y,
-        BIRD_X + BIRD_R + 5, y + 2,
-        BIRD_X + BIRD_R, y + 4,
+        x + BIRD_R, y,
+        x + BIRD_R + 5, y + 2,
+        x + BIRD_R, y + 4,
         COL_BEAK
     );
 }
@@ -228,8 +223,10 @@ void drawGround() {
 //  Çizim: Bulutlar (yavaş kayar)
 // ==========================================
 void drawClouds() {
-    int cx1 = 200 - (cloudOffset % 220);
-    int cx2 = 330 - (cloudOffset % 350);
+    // FPS60: cloudOffset float olduğu için int'e cast edip mod al
+    int off = (int)cloudOffset;
+    int cx1 = 200 - (off % 220);
+    int cx2 = 330 - (off % 350);
 
     // Bulut 1
     canvas.fillCircle(cx1,      18, 7, TFT_WHITE);
@@ -243,7 +240,7 @@ void drawClouds() {
 }
 
 // ==========================================
-//  Çizim: Skor (gölgeli beyaz metin)
+//  Çizim: Skor (gölgeli beyaz metin) ve FPS
 // ==========================================
 void drawScore() {
     char buf[8];
@@ -260,6 +257,18 @@ void drawScore() {
     canvas.setTextColor(TFT_WHITE);
     canvas.setCursor(sx, 5);
     canvas.print(buf);
+
+    // FPS Sayacı (sağ taraf)
+    char fpsStr[10];
+    sprintf(fpsStr, "FPS:%d", currentFPS);
+    int fpsWidth = strlen(fpsStr) * 6; // Her harf/rakam 6 piksel
+    
+    canvas.setTextSize(1);
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(SCR_W - fpsWidth - 2, 5);
+    canvas.print("FPS:");
+    canvas.setTextColor(TFT_GREEN);
+    canvas.print(currentFPS);
 }
 
 // ==========================================
@@ -297,36 +306,39 @@ void drawMenu() {
 
     // Başlık gölgesi
     canvas.setTextSize(2);
-    canvas.setTextColor(0x4208);
-    canvas.setCursor(10, 11);
+    canvas.setTextColor(COL_FLAPPY_SHADOW);
+    canvas.setCursor(15, 11);
     canvas.print("FLAPPY BIRD");
     // Başlık
     canvas.setTextColor(TFT_YELLOW);
-    canvas.setCursor(9, 10);
+    canvas.setCursor(14, 10);
     canvas.print("FLAPPY BIRD");
 
-    // Animasyonlu kuş (yukarı-aşağı salınım)
+    // Animasyonlu kuş (yukarı-aşağı salınım) — millis() tabanlı, dt'den bağımsız
     float menuBirdY = 55.0f + sin(millis() / 200.0f) * 8.0f;
     birdVel = -1.0f; // Kanat yukarıda gösterilsin
-    drawBird((int)menuBirdY);
+    drawBird(SCR_W / 2, (int)menuBirdY);
 
-    // Talimatlar
+    // Alt Menuler
     canvas.setTextSize(1);
+    
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(35, 80);
+    canvas.setCursor(10, 95);
     canvas.print("[A] Basla");
-    canvas.setTextColor(0xBDF7);
-    canvas.setCursor(35, 95);
+
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(85, 95);
     canvas.print("[B] OS Menu");
 
     // En yüksek skor
-    if (highScore > 0) {
-        canvas.setTextColor(TFT_YELLOW);
-        canvas.setCursor(35, 70);
-        canvas.print("Rekor: ");
-        canvas.print(highScore);
-    }
+    char rekorBuf[20];
+    sprintf(rekorBuf, "Rekor: %d", highScore);
+    int rekorW = strlen(rekorBuf) * 6;
+    canvas.setTextColor(TFT_YELLOW);
+    canvas.setCursor(SCR_W / 2 - (rekorW / 2), 107);
+    canvas.print(rekorBuf);
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -334,17 +346,17 @@ void drawMenu() {
 //  Ekran: Oyun Bitti
 // ==========================================
 void drawGameOver() {
-    canvas.fillSprite(0x0000);
+    canvas.fillSprite(TFT_BLACK);
 
-    // Panel çerçevesi
-    canvas.fillRoundRect(15, 12, 130, 104, 5, COL_PANEL);
-    canvas.drawRoundRect(15, 12, 130, 104, 5, TFT_RED);
-    canvas.drawRoundRect(16, 13, 128, 102, 4, 0x8000);
+    // Panel çerçevesi (Büyütüldü)
+    canvas.fillRoundRect(15, 6, 130, 120, 5, COL_PANEL);
+    canvas.drawRoundRect(15, 6, 130, 120, 5, TFT_RED);
+    canvas.drawRoundRect(16, 7, 128, 118, 4, COL_RED_DARK);
 
     // Başlık
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_RED);
-    canvas.setCursor(20, 20);
+    canvas.setCursor(20, 14);
     canvas.print("OYUN BITTI");
 
     // Skor bilgisi
@@ -354,6 +366,7 @@ void drawGameOver() {
     canvas.print("Skor:   ");
     canvas.setTextColor(TFT_YELLOW);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 42);
     canvas.print(score);
 
     canvas.setTextSize(1);
@@ -362,25 +375,27 @@ void drawGameOver() {
     canvas.print("Rekor:  ");
     canvas.setTextColor(TFT_GREEN);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 62);
     canvas.print(highScore);
 
     // Yeni rekor bildirimi
     if (newRecord) {
         canvas.setTextSize(1);
         canvas.setTextColor(TFT_MAGENTA);
-        canvas.setCursor(30, 88);
-        canvas.print("** YENI REKOR! **");
+        canvas.setCursor(47, 88);
+        canvas.print("YENI REKOR!");
     }
 
     // Tekrar oyna
     canvas.setTextSize(1);
-    canvas.setTextColor(0xBDF7);
-    canvas.setCursor(30, 100);
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(30, 104);
     canvas.print("[A] Tekrar Oyna");
     
-    canvas.setCursor(30, 112);
+    canvas.setCursor(30, 114);
     canvas.print("[B] OS Menu");
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -389,8 +404,8 @@ void drawGameOver() {
 // ==========================================
 void setup() {
     // OLED Kapatma ve Buzzer Susturma (Hızlı Başlatma için)
-    pinMode(5, OUTPUT);
-    digitalWrite(5, LOW);
+    pinMode(BUZZER, OUTPUT);
+    digitalWrite(BUZZER, LOW);
     Wire.begin(8, 9);
     Wire.beginTransmission(0x3C);
     Wire.write(0x00);
@@ -415,9 +430,17 @@ void setup() {
     // SPI başlat
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, -1);
 
+    initDevTools(tft);
+
     // Ekran başlatma
     tft.init();
     tft.setRotation(1);   // Landscape modu: 160x128
+    // TFT donanimini RGB moduna gecir (standart RGB565 sabitler icin)
+    tft.startWrite();
+    tft.writecommand(0x36);  // MADCTL
+    tft.writedata(0xA0);     // MY|MV, BGR bit kapali (RGB modu)
+    tft.endWrite();
+    setScreenshotMode(SCR_RGB_SWAP);
     tft.fillScreen(TFT_BLACK);
 
     // Sprite tamponu oluştur (çift tamponlama / flicker-free)
@@ -429,6 +452,7 @@ void setup() {
 
     state = MENU;
     lastFrameMs = millis();
+    fpsStartTime = millis();
 }
 
 // ==========================================
@@ -446,15 +470,25 @@ void loop() {
     }
     prevJoySw = currJoySw;
 
-    // ---- Frame hız kontrolü ----
+    // FPS60: Delta-Time hesaplama (frame kilidi kaldırıldı)
     unsigned long now = millis();
-    if (now - lastFrameMs < FRAME_MS) return;
+    float dt = (now - lastFrameMs) / 1000.0f;
+    // FPS60: Lag spike koruması — dt'yi 50ms ile sınırla (en kötü 20 FPS)
+    if (dt > 0.05f) dt = 0.05f;
     lastFrameMs = now;
 
     // ---- BTN_A: Kenar tespiti (rising edge) ----
     int btnA = digitalRead(BTN_A);
     bool btnA_press = (btnA == LOW && prevBtnA == HIGH);
     prevBtnA = btnA;
+
+    // ---- FPS Hesaplama ----
+    fpsFrameCount++;
+    if (now - fpsStartTime >= 1000) {
+        currentFPS = fpsFrameCount;
+        fpsFrameCount = 0;
+        fpsStartTime = now;
+    }
 
     // ---- Durum Makinesi ----
     switch (state) {
@@ -463,7 +497,8 @@ void loop() {
         //  ANA MENÜ
         // ======================================
         case MENU:
-            cloudOffset++;
+            // FPS60: Bulut kayması delta-time ile (orijinalde frame başına 1 birim = 30 birim/sn)
+            cloudOffset += 30.0f * dt;
             drawMenu();
             if (btnA_press) {
                 playSound(880, 50);
@@ -479,23 +514,24 @@ void loop() {
         //  OYUN
         // ======================================
         case PLAYING: {
-            // --- Fizik güncelle ---
-            birdVel += GRAVITY;
-            birdY += birdVel;
+            // --- Fizik güncelle (FPS60: dt ile çarpıldı) ---
+            birdVel += GRAVITY * dt;
+            birdY += birdVel * dt;
 
             // Zıplama
             if (btnA_press) {
-                birdVel = JUMP_VEL;
+                birdVel = JUMP_VEL; // FPS60: JUMP_VEL artık piksel/sn (-90)
                 playSound(660, 30);
             }
 
             // Boru hızı (zorluk artışı)
-            float spd = BASE_SPEED + score * 0.04f;
+            // FPS60: Hız artışı piksel/sn cinsinden (0.04 * 30 = 1.2)
+            float spd = BASE_SPEED + score * 1.2f;
             if (spd > MAX_SPEED) spd = MAX_SPEED;
 
-            // --- Boruları güncelle ---
+            // --- Boruları güncelle (FPS60: dt ile çarpıldı) ---
             for (int i = 0; i < NUM_PIPES; i++) {
-                pipes[i].x -= spd;
+                pipes[i].x -= spd * dt;
 
                 // Skor sayma (kuş boruyu geçti mi?)
                 if (!pipes[i].scored && pipes[i].x + PIPE_W < BIRD_X) {
@@ -517,8 +553,8 @@ void loop() {
                 }
             }
 
-            // Bulut animasyonu
-            cloudOffset++;
+            // FPS60: Bulut animasyonu delta-time ile
+            cloudOffset += 30.0f * dt;
 
             // --- Çarpışma kontrolü ---
             if (checkCollision()) {
@@ -547,10 +583,11 @@ void loop() {
             }
 
             drawGround();
-            drawBird((int)birdY);
+            drawBird(BIRD_X, (int)birdY);
             drawScore();
 
             // Sprite'ı ekrana bas
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             break;
         }
@@ -581,26 +618,31 @@ void loop() {
                 drawPipe(pipes[i]);
             }
             drawGround();
-            drawBird((int)birdY);
+            drawBird(BIRD_X, (int)birdY);
             drawScore();
             
             // Üzerine karartma ve menü
-            canvas.fillRect(30, 40, 100, 50, COL_PANEL);
-            canvas.drawRect(30, 40, 100, 50, TFT_WHITE);
+            canvas.fillRect(30, 36, 100, 56, canvas.color565(10, 10, 15));
+            canvas.drawRect(30, 36, 100, 56, TFT_GREEN);
+            
+            canvas.setTextSize(2);
+            canvas.setTextColor(TFT_YELLOW);
+            canvas.setCursor(50, 42); canvas.print("PAUSE");
             
             canvas.setTextSize(1);
             canvas.setTextColor(TFT_WHITE);
-            canvas.setCursor(65, 48); canvas.print("PAUSE");
-            canvas.setTextColor(TFT_YELLOW);
-            canvas.setCursor(42, 62); canvas.print("[A] Devam Et");
-            canvas.setCursor(42, 74); canvas.print("[B] OS Menu");
+            canvas.setCursor(44, 64); canvas.print("[A] Devam Et");
+            canvas.setTextColor(canvas.color565(180, 180, 180));
+            canvas.setCursor(47, 78); canvas.print("[B] OS Menu");
             
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             
             if (!digitalRead(BTN_A)) {
                 playSound(800, 50);
                 delay(200);
                 state = PLAYING;
+                // FPS60: Pause'dan çıkarken dt sıfırlaması için timestamp güncelle
                 lastFrameMs = millis();
             }
             if (!digitalRead(BTN_B)) {

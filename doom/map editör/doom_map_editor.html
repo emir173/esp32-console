@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emir DOOM - Savaş Alanı İnşa Kılavuzu V2</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --panel-bg: rgba(31, 40, 51, 0.6);
+            --primary-color: #ff2a2a;
+            --primary-hover: #ff4d4d;
+            --text-color: #c5c6c7;
+            --border-color: rgba(69, 162, 158, 0.2);
+            --cell-size: 20px;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: radial-gradient(circle at top, #1f1212, var(--bg-color));
+            color: var(--text-color);
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        header {
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.4);
+            border-bottom: 2px solid var(--primary-color);
+            box-shadow: 0 0 20px rgba(255, 42, 42, 0.2);
+        }
+
+        header h1 {
+            margin: 0;
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.5rem;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px var(--primary-color);
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            padding: 20px;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbar {
+            flex: 0 0 280px;
+            overflow-y: auto;
+        }
+
+        .toolbar h2 {
+            margin-top: 0;
+            font-family: 'Outfit', sans-serif;
+            color: #fff;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        .tool-group {
+            margin-bottom: 20px;
+        }
+
+        .tool-group h3 {
+            font-size: 0.9rem;
+            color: #66fcf1;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .brush-btn {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 10px 15px;
+            margin-bottom: 8px;
+            width: 100%;
+            text-align: left;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brush-btn:hover {
+            background: rgba(255, 42, 42, 0.1);
+            border-color: var(--primary-color);
+            transform: translateX(5px);
+        }
+
+        .brush-btn.active {
+            background: rgba(255, 42, 42, 0.2);
+            border-color: var(--primary-color);
+            color: #fff;
+            box-shadow: 0 0 15px rgba(255, 42, 42, 0.4);
+        }
+
+        .select-box {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            border-radius: 6px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+        }
+
+        .select-box:focus {
+            border-color: var(--primary-color);
+        }
+
+        .editor-panel {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto;
+        }
+
+        .grid-container {
+            background: #000;
+            border: 2px solid #333;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            position: relative;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(32, var(--cell-size));
+            grid-template-rows: repeat(32, var(--cell-size));
+            gap: 1px;
+            background: #222;
+        }
+
+        .cell {
+            width: var(--cell-size);
+            height: var(--cell-size);
+            background: #111;
+            cursor: crosshair;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            user-select: none;
+            transition: background 0.1s;
+        }
+
+        .cell:hover {
+            filter: brightness(1.5);
+            outline: 1px solid var(--primary-color);
+            z-index: 10;
+        }
+
+        /* Drag over effect */
+        .cell.drag-over {
+            background: rgba(255, 255, 0, 0.3) !important;
+            outline: 2px dashed #ff0;
+            z-index: 15;
+        }
+
+        /* Error pulse animation */
+        .error-pulse {
+            animation: pulseRed 1s infinite;
+            background: #ff0000 !important;
+        }
+        @keyframes pulseRed {
+            0% { transform: scale(1); box-shadow: 0 0 0 rgba(255,0,0,0.7); z-index: 20;}
+            50% { transform: scale(1.2); box-shadow: 0 0 10px rgba(255,0,0,1); z-index: 20; }
+            100% { transform: scale(1); box-shadow: 0 0 0 rgba(255,0,0,0); z-index: 20;}
+        }
+
+        /* Terrain Colors */
+        .terrain-1 { background: #444; } /* Duvar */
+        .terrain-2 { background: #666; border-radius: 50%; transform: scale(0.8); } /* Sütun */
+        .terrain-6 { background: #c99b24; } /* Kapı */
+        .terrain-7 { background: #ff0000; } /* Kilitli Kapı */
+        .terrain-8 { background: #00ff00; } /* Çıkış */
+
+        .code-panel {
+            flex: 0 0 400px;
+        }
+
+        #previewCanvas {
+            width: 100%;
+            height: 240px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            background: #000;
+            margin-bottom: 15px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+        }
+
+        .primary-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-family: 'Outfit', sans-serif;
+            text-transform: uppercase;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(255, 42, 42, 0.5);
+            transition: all 0.2s ease;
+            margin-bottom: 15px;
+            width: 100%;
+        }
+
+        .primary-btn:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 0 25px rgba(255, 42, 42, 0.8);
+        }
+        
+        .danger-btn {
+            background: transparent;
+            border: 1px solid #ff4444;
+            color: #ff4444;
+            padding: 10px;
+            width: 100%;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        
+        .danger-btn:hover {
+            background: rgba(255, 68, 68, 0.1);
+        }
+
+        textarea {
+            width: 100%;
+            flex: 1;
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--border-color);
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            padding: 10px;
+            border-radius: 6px;
+            resize: none;
+            box-sizing: border-box;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Emir DOOM Geliştirme Kiti V2</h1>
+    </header>
+
+    <div class="container">
+        <!-- TOOLBAR -->
+        <div class="panel toolbar">
+            <h2>Araçlar</h2>
+            
+            <button class="danger-btn" id="clearBtn">🗑️ Haritayı Temizle</button>
+
+            <div class="tool-group">
+                <h3>⚙️ Ayarlar</h3>
+                <label>Fırça Boyutu:</label>
+                <select id="brushSize" class="select-box">
+                    <option value="1">1x1 Normal</option>
+                    <option value="2">2x2 Kalın</option>
+                    <option value="3">3x3 Devasa</option>
+                </select>
+                
+                <label>Simetri (Mirror):</label>
+                <select id="mirrorMode" class="select-box">
+                    <option value="none">Yok</option>
+                    <option value="x">Yatay (Sol / Sağ)</option>
+                    <option value="y">Dikey (Üst / Alt)</option>
+                    <option value="both">Tam Simetri (Dörtlü)</option>
+                </select>
+            </div>
+
+            <div class="tool-group">
+                <h3>🏗️ Mimari</h3>
+                <button class="brush-btn active" data-type="terrain" data-val="1">🧱 Duvar (1)</button>
+                <button class="brush-btn" data-type="terrain" data-val="0">🧽 Boş Alan (Silgi)</button>
+                <button class="brush-btn" data-type="terrain" data-val="2">🪨 Sütun (2)</button>
+                <button class="brush-btn" data-type="terrain" data-val="6">🚪 Normal Kapı (6)</button>
+                <button class="brush-btn" data-type="terrain" data-val="7">🔒 Kilitli Kapı (7)</button>
+                <button class="brush-btn" data-type="terrain" data-val="8">🏁 Çıkış (8)</button>
+            </div>
+
+            <div class="tool-group">
+                <h3>👾 Karakter & Eşya</h3>
+                <p style="font-size:12px; color:#888;">(Yerleştirdikten sonra farenizle sürükleyip taşıyabilirsiniz)</p>
+                <button class="brush-btn" data-type="sprite" data-val="X">❌ Başlangıç Noktası (X)</button>
+                <button class="brush-btn" data-type="sprite" data-val="5">🧟 Zombi (5)</button>
+                <button class="brush-btn" data-type="sprite" data-val="17">🐷 Pinky (17)</button>
+                <button class="brush-btn" data-type="sprite" data-val="14">👹 Baron (14)</button>
+                <button class="brush-btn" data-type="sprite" data-val="15">🛢️ Varil (15)</button>
+                <button class="brush-btn" data-type="sprite" data-val="9">📦 Mermi (9)</button>
+                <button class="brush-btn" data-type="sprite" data-val="10">💊 Can (10)</button>
+                <button class="brush-btn" data-type="sprite" data-val="43">🛡️ Zırh (43)</button>
+                <button class="brush-btn" data-type="sprite" data-val="11">🔑 Anahtar (11)</button>
+            </div>
+        </div>
+
+        <!-- EDITOR GRID -->
+        <div class="panel editor-panel">
+            <div class="grid-container">
+                <div id="grid" class="grid"></div>
+            </div>
+        </div>
+
+        <!-- CODE & PREVIEW PANEL -->
+        <div class="panel code-panel">
+            <h2>👁️ 3D Ön İzleme</h2>
+            <!-- Mini Raycaster Canvas -->
+            <canvas id="previewCanvas" width="320" height="240"></canvas>
+            
+            <button id="generateBtn" class="primary-btn">⚡ Kodu Üret</button>
+            <textarea id="output" placeholder="Kodu üretmek için '⚡ Kodu Üret' butonuna basın..."></textarea>
+        </div>
+    </div>
+
+    <script>
+        const GRID_SIZE = 32;
+        let isDrawing = false;
+        
+        let currentTool = { type: 'terrain', val: '1' };
+
+        // Data arrays
+        const terrain = Array.from({length: GRID_SIZE}, () => Array(GRID_SIZE).fill(0));
+        const sprites = Array.from({length: GRID_SIZE}, () => Array(GRID_SIZE).fill(null));
+
+        // Initialize outer walls
+        for(let i=0; i<GRID_SIZE; i++) {
+            terrain[0][i] = 1;
+            terrain[GRID_SIZE-1][i] = 1;
+            terrain[i][0] = 1;
+            terrain[i][GRID_SIZE-1] = 1;
+        }
+
+        const gridEl = document.getElementById('grid');
+        
+        const spriteEmojis = {
+            'X': '❌', '5': '🧟', '17': '🐷', '14': '👹', 
+            '15': '🛢️', '9': '📦', '10': '💊', '43': '🛡️', '11': '🔑'
+        };
+
+        // DRAG & DROP STATE
+        let draggedSprite = null;
+        let dragSrc = null;
+
+        // Build Grid
+        for (let y = 0; y < GRID_SIZE; y++) {
+            for (let x = 0; x < GRID_SIZE; x++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.dataset.x = x;
+                cell.dataset.y = y;
+                
+                // DRAW EVENTS
+                cell.addEventListener('mousedown', (e) => {
+                    if (cell.draggable) return; // Sürükleniyorsa boyama yapma
+                    isDrawing = true;
+                    applyTool(x, y);
+                });
+                cell.addEventListener('mouseenter', (e) => {
+                    if (isDrawing && !draggedSprite) applyTool(x, y);
+                });
+
+                // DRAG & DROP EVENTS
+                cell.addEventListener('dragstart', (e) => {
+                    if (sprites[y][x]) {
+                        draggedSprite = sprites[y][x];
+                        dragSrc = {x, y};
+                        // Sürüklenen öğeyi biraz şeffaf yap
+                        setTimeout(() => cell.style.opacity = '0.5', 0);
+                    } else {
+                        e.preventDefault();
+                    }
+                });
+                
+                cell.addEventListener('dragover', (e) => {
+                    e.preventDefault(); // allow drop
+                    if(terrain[y][x] === 0) {
+                        cell.classList.add('drag-over');
+                    }
+                });
+                
+                cell.addEventListener('dragleave', (e) => {
+                    cell.classList.remove('drag-over');
+                });
+                
+                cell.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    cell.classList.remove('drag-over');
+                    
+                    if (draggedSprite && terrain[y][x] === 0) {
+                        sprites[dragSrc.y][dragSrc.x] = null; // Eski yerinden sil
+                        
+                        // Eğer 'X' (Spawn) taşıyorsak, eskisini bulup sil (güvenlik için)
+                        if (draggedSprite === 'X') {
+                            for(let r=0; r<GRID_SIZE; r++)
+                                for(let c=0; c<GRID_SIZE; c++)
+                                    if(sprites[r][c] === 'X') sprites[r][c] = null;
+                        }
+                        
+                        sprites[y][x] = draggedSprite; // Yeni yerine koy
+                        updateGridUI();
+                    }
+                    draggedSprite = null;
+                    isDrawing = false;
+                });
+                
+                cell.addEventListener('dragend', () => {
+                    cell.style.opacity = '1';
+                    draggedSprite = null;
+                });
+                
+                gridEl.appendChild(cell);
+            }
+        }
+
+        document.addEventListener('mouseup', () => { isDrawing = false; });
+
+        function updateGridUI() {
+            const cells = gridEl.children;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const idx = y * GRID_SIZE + x;
+                    const cell = cells[idx];
+                    
+                    cell.className = 'cell';
+                    if (terrain[y][x] > 0) {
+                        cell.classList.add('terrain-' + terrain[y][x]);
+                    }
+                    
+                    if (sprites[y][x]) {
+                        cell.textContent = spriteEmojis[sprites[y][x]] || '';
+                        cell.draggable = true; // Sprite varsa sürüklenebilir
+                        cell.style.cursor = 'grab';
+                    } else {
+                        cell.textContent = '';
+                        cell.draggable = false;
+                        cell.style.cursor = 'crosshair';
+                    }
+                }
+            }
+        }
+
+        function getAffectedCells(centerX, centerY) {
+            let cells = [];
+            const brushSize = parseInt(document.getElementById('brushSize').value);
+            const mirrorMode = document.getElementById('mirrorMode').value;
+
+            if (brushSize === 1) {
+                cells.push({x: centerX, y: centerY});
+            } else if (brushSize === 2) {
+                cells.push({x: centerX, y: centerY});
+                cells.push({x: centerX+1, y: centerY});
+                cells.push({x: centerX, y: centerY+1});
+                cells.push({x: centerX+1, y: centerY+1});
+            } else if (brushSize === 3) {
+                for(let dy=-1; dy<=1; dy++) {
+                    for(let dx=-1; dx<=1; dx++) {
+                        cells.push({x: centerX+dx, y: centerY+dy});
+                    }
+                }
+            }
+            
+            // Harita dışına taşan fırçaları yoksay
+            cells = cells.filter(c => c.x >= 0 && c.x < GRID_SIZE && c.y >= 0 && c.y < GRID_SIZE);
+            
+            // Simetri Modu (Mirroring) hesaplamaları
+            let mirrored = [];
+            cells.forEach(c => {
+                mirrored.push({x: c.x, y: c.y});
+                if (mirrorMode === 'x' || mirrorMode === 'both') mirrored.push({x: 31 - c.x, y: c.y});
+                if (mirrorMode === 'y' || mirrorMode === 'both') mirrored.push({x: c.x, y: 31 - c.y});
+                if (mirrorMode === 'both') mirrored.push({x: 31 - c.x, y: 31 - c.y});
+            });
+            return mirrored;
+        }
+
+        function applyTool(x, y) {
+            const targets = getAffectedCells(x, y);
+            targets.forEach(t => {
+                let tx = t.x, ty = t.y;
+                if (currentTool.type === 'terrain') {
+                    const val = parseInt(currentTool.val);
+                    terrain[ty][tx] = val;
+                    sprites[ty][tx] = null; 
+                } else if (currentTool.type === 'sprite') {
+                    const val = currentTool.val;
+                    if (terrain[ty][tx] === 0) {
+                        if (val === 'X') {
+                            for(let r=0; r<GRID_SIZE; r++)
+                                for(let c=0; c<GRID_SIZE; c++)
+                                    if(sprites[r][c] === 'X') sprites[r][c] = null;
+                        }
+                        sprites[ty][tx] = val;
+                    }
+                }
+            });
+            updateGridUI();
+        }
+
+        // Toolbar Logic
+        document.querySelectorAll('.brush-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.brush-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTool = {
+                    type: btn.dataset.type,
+                    val: btn.dataset.val
+                };
+            });
+        });
+
+        // Clear Button
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            if(confirm('Tüm harita silinecek. Emin misin?')) {
+                for(let y=0; y<GRID_SIZE; y++) {
+                    for(let x=0; x<GRID_SIZE; x++) {
+                        terrain[y][x] = (x===0 || y===0 || x===GRID_SIZE-1 || y===GRID_SIZE-1) ? 1 : 0;
+                        sprites[y][x] = null;
+                    }
+                }
+                updateGridUI();
+            }
+        });
+
+        // Boundary Check & Generate Code
+        document.getElementById('generateBtn').addEventListener('click', () => {
+            // Önceki hata efektlerini temizle
+            document.querySelectorAll('.error-pulse').forEach(el => el.classList.remove('error-pulse'));
+
+            // Sınır Kontrolü (Boundary Validation)
+            let errors = [];
+            for(let i=0; i<GRID_SIZE; i++) {
+                if(terrain[0][i] === 0) errors.push({x:i, y:0});
+                if(terrain[GRID_SIZE-1][i] === 0) errors.push({x:i, y:GRID_SIZE-1});
+                if(terrain[i][0] === 0) errors.push({x:0, y:i});
+                if(terrain[i][GRID_SIZE-1] === 0) errors.push({x:GRID_SIZE-1, y:i});
+            }
+
+            if(errors.length > 0) {
+                errors.forEach(e => {
+                    const cells = gridEl.children;
+                    cells[e.y * GRID_SIZE + e.x].classList.add('error-pulse');
+                });
+                alert('DİKKAT: Harita sınırlarında (0. veya 31. satır/sütun) boşluk (0) var! Oyuncu dışarı düşebilir. Lütfen kırmızı ile yanıp sönen kenarları duvarla kapatın.');
+                return; // Hatayı çözene kadar kod üretme!
+            }
+
+            // C++ Kodu Üretimi
+            let cppCode = `const uint8_t LEVEL1[MH][MW] = {\n`;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                cppCode += `{${terrain[y].join(',')}}`;
+                if (y < GRID_SIZE - 1) cppCode += `,\n`;
+                else cppCode += `\n`;
+            }
+            cppCode += `};\n\n`;
+
+            let startX = 1.5, startY = 1.5;
+            let spriteCode = ``;
+            let spriteIndex = 0;
+
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (sprites[y][x]) {
+                        if (sprites[y][x] === 'X') {
+                            startX = x + 0.5;
+                            startY = y + 0.5;
+                        } else {
+                            spriteCode += `initSprite(${spriteIndex}, ${x + 0.5}, ${y + 0.5}, ${sprites[y][x]}, 1);\n`;
+                            spriteIndex++;
+                        }
+                    }
+                }
+            }
+
+            let setupCode = `// --- loadLevel İçine Yapıştırılacak Kod ---
+px = ${startX}; py = ${startY}; dirX = 1; dirY = 0; planeX = 0; planeY = 0.66;
+
+// NUM_SPRITES değerinizi en az ${spriteIndex} yapmayı unutmayın!
+${spriteCode}`;
+
+            document.getElementById('output').value = cppCode + setupCode;
+        });
+
+        // ----------------------------------------------------
+        // MINI RAYCASTER 3D ÖN İZLEME MOTORU (V2)
+        // ----------------------------------------------------
+        const canvas = document.getElementById('previewCanvas');
+        const ctx = canvas.getContext('2d');
+        let previewAngle = 0;
+
+        function drawPreview() {
+            let w = canvas.width;
+            let h = canvas.height;
+            
+            // Zemin ve Tavan
+            ctx.fillStyle = '#181818'; // Tavan
+            ctx.fillRect(0, 0, w, h/2);
+            ctx.fillStyle = '#2a2a2a'; // Zemin
+            ctx.fillRect(0, h/2, w, h/2);
+
+            // Başlangıç noktasını ('X') bul
+            let px = 1.5, py = 1.5;
+            for(let y=0; y<GRID_SIZE; y++) {
+                for(let x=0; x<GRID_SIZE; x++) {
+                    if(sprites[y][x] === 'X') { px = x+0.5; py = y+0.5; }
+                }
+            }
+
+            // Kamera yönü (yavaşça dönüyor)
+            let dirX = Math.cos(previewAngle);
+            let dirY = Math.sin(previewAngle);
+            let planeX = -Math.sin(previewAngle) * 0.66;
+            let planeY = Math.cos(previewAngle) * 0.66;
+
+            let zBuffer = new Array(w);
+
+            // Ekranın her bir dikey pikseli için Raycast gönder
+            for(let x=0; x<w; x++) {
+                let cameraX = 2 * x / w - 1;
+                let rayDirX = dirX + planeX * cameraX;
+                let rayDirY = dirY + planeY * cameraX;
+
+                let mapX = Math.floor(px);
+                let mapY = Math.floor(py);
+
+                let sideDistX, sideDistY;
+                let deltaDistX = Math.abs(1 / rayDirX);
+                let deltaDistY = Math.abs(1 / rayDirY);
+                let perpWallDist;
+
+                let stepX, stepY;
+                let hit = 0;
+                let side = 0;
+                let wallType = 0;
+
+                if(rayDirX < 0) { stepX = -1; sideDistX = (px - mapX) * deltaDistX; }
+                else { stepX = 1; sideDistX = (mapX + 1.0 - px) * deltaDistX; }
+                if(rayDirY < 0) { stepY = -1; sideDistY = (py - mapY) * deltaDistY; }
+                else { stepY = 1; sideDistY = (mapY + 1.0 - py) * deltaDistY; }
+
+                // DDA (Digital Differential Analysis) Döngüsü
+                while(hit === 0) {
+                    if(sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+                    else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+                    
+                    // Harita sınırları dışına çıkarsa sonsuz döngüyü engelle
+                    if(mapX < 0 || mapX >= GRID_SIZE || mapY < 0 || mapY >= GRID_SIZE) {
+                        hit = 1; wallType = 1;
+                    } else if(terrain[mapY][mapX] > 0) {
+                        hit = 1;
+                        wallType = terrain[mapY][mapX];
+                    }
+                }
+
+                if(side === 0) perpWallDist = (mapX - px + (1 - stepX) / 2) / rayDirX;
+                else perpWallDist = (mapY - py + (1 - stepY) / 2) / rayDirY;
+
+                let lineHeight = Math.floor(h / perpWallDist);
+                let drawStart = -lineHeight / 2 + h / 2;
+                if(drawStart < 0) drawStart = 0;
+                let drawEnd = lineHeight / 2 + h / 2;
+                if(drawEnd >= h) drawEnd = h - 1;
+
+                // Duvar rengi belirleme (Aydınlatma efekti için X/Y side farkı)
+                let color = '#777';
+                if(wallType === 1) color = side===1 ? '#4d4d4d' : '#666666'; // Duvar
+                if(wallType === 2) color = side===1 ? '#333333' : '#444444'; // Sütun
+                if(wallType === 6) color = side===1 ? '#a8811d' : '#c99b24'; // Kapı
+                if(wallType === 7) color = side===1 ? '#b30000' : '#ff1a1a'; // Kilitli Kapı
+                if(wallType === 8) color = side===1 ? '#00b300' : '#00ff00'; // Çıkış
+
+                // Çizgi çiz (1 pixel genişliğinde)
+                ctx.strokeStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(x, drawStart);
+                ctx.lineTo(x, drawEnd);
+                ctx.stroke();
+
+                zBuffer[x] = perpWallDist; // Sprite hesaplaması için Z-Buffer
+            }
+
+            // SPRITE RENDERER (Düşmanlar ve Eşyalar)
+            let spriteList = [];
+            for(let sy=0; sy<GRID_SIZE; sy++) {
+                for(let sx=0; sx<GRID_SIZE; sx++) {
+                    if(sprites[sy][sx] && sprites[sy][sx] !== 'X') {
+                        spriteList.push({ x: sx + 0.5, y: sy + 0.5, type: sprites[sy][sx] });
+                    }
+                }
+            }
+
+            // Uzaklığa göre sırala (Uzaktan yakına)
+            for(let i=0; i<spriteList.length; i++) {
+                spriteList[i].dist = Math.pow(px - spriteList[i].x, 2) + Math.pow(py - spriteList[i].y, 2);
+            }
+            spriteList.sort((a, b) => b.dist - a.dist);
+
+            // Ekrana yansıt
+            for(let i=0; i<spriteList.length; i++) {
+                let spriteX = spriteList[i].x - px;
+                let spriteY = spriteList[i].y - py;
+
+                let invDet = 1.0 / (planeX * dirY - dirX * planeY);
+                let transformX = invDet * (dirY * spriteX - dirX * spriteY);
+                let transformY = invDet * (-planeY * spriteX + planeX * spriteY);
+
+                if(transformY > 0) { // Sprite kameranın önündeyse
+                    let spriteScreenX = Math.floor((w / 2) * (1 + transformX / transformY));
+                    let spriteHeight = Math.abs(Math.floor(h / transformY));
+                    
+                    let centerX = spriteScreenX;
+                    // Eğer sprite ekranın içindeyse ve önünde duvar yoksa çiz (Z-Buffer kontrolü)
+                    if(centerX >= 0 && centerX < w && transformY < zBuffer[centerX]) {
+                        let emoji = spriteEmojis[spriteList[i].type] || '❓';
+                        ctx.font = Math.floor(spriteHeight * 0.8) + "px Arial";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(emoji, centerX, h/2);
+                    }
+                }
+            }
+        }
+
+        function loopPreview() {
+            previewAngle += 0.005; // Kamerayı yavaşça 360 derece döndür
+            drawPreview();
+            requestAnimationFrame(loopPreview);
+        }
+
+        // Başlangıç Kurulumları
+        updateGridUI();
+        loopPreview(); // Raycaster'ı ateşle!
+
+    </script>
+</body>
+</html>

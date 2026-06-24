@@ -3,7 +3,7 @@
   <br/><br/>
   <h1>E-OS V2.1 — Handheld Console</h1>
   <p><b>Sınırları Zorlayan Güç.</b></p>
-  <p>ESP32-S3 mimarisi üzerinde sıfırdan yazılmış E-OS işletim sistemi. Çift ekran, 6 tam ekran oyun ve muazzam bir akıcılık.</p>
+  <p>ESP32-S3 mimarisi üzerinde sıfırdan yazılmış E-OS işletim sistemi. Çift ekran, 11 oyun ve muazzam bir akıcılık.</p>
   
   <p>
     <img src="https://img.shields.io/badge/MCU-ESP32--S3-blue?style=for-the-badge&logo=espressif" alt="ESP32-S3"/>
@@ -41,7 +41,7 @@ Hazır kütüphanelerin aksine E-OS, doğrudan donanımla konuşur.
 
 ---
 
-## 🕹️ Özel Kodlanmış 6 Efsane Oyun
+## 🕹️ Özel Kodlanmış 11 Oyun
 Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi için yeniden inşa edilmiştir.
 
 <div align="center">
@@ -49,12 +49,17 @@ Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi
   <img src="docs/images/space.jpg" width="45%" alt="Space Invaders">
 </div>
 
-1. **DOOM (3D Raycasting):** Mikrodenetleyicilerde görmesi nadir olan, gerçek zamanlı 3D ortamlar, silah mekanikleri ve düşman yapay zekası **100+ FPS** hızında TFT ekrana akar.
-2. **Space Invaders:** Dalga dalga gelen uzaylılara karşı pürüzsüz mekanikler ve OLED ekran entegrasyonu.
-3. **Arkanoid (Breakout):** Joystick hassasiyetinin ön planda olduğu, seviyeleri giderek zorlaşan tuğla kırma efsanesi.
-4. **Pac-Man:** Özel yapay zeka ile kodlanmış hayaletler ve klasik labirent heyecanı.
-5. **Flappy Bird:** Milisaniyelik tepkiler isteyen bağımlılık yapıcı donanım testi.
-6. **Snake:** Akıcı mekanikleriyle retro yılan oyunu.
+1. **DOOM (3D Raycasting):** Mikrodenetleyicilerde görmesi nadir olan, gerçek zamanlı 3D ortamlar, silah mekanikleri ve düşman yapay zekası **100+ FPS** hızında TFT ekrana akar. FreeRTOS triple-buffer + PSRAM textures.
+2. **Wire3D (Space Shooter):** Wireframe 3D uzay savaşı. 114 FPS.
+3. **Space Invaders:** Dalga dalga gelen uzaylılara karşı pürüzsüz mekanikler ve OLED ekran entegrasyonu.
+4. **Galactic Strike:** Uzay gemisi ile düşman filolarına karşı savaş.
+5. **Mode7 (Yarış):** SNES tarzı Mode 7 pseudo-3D yarış motoru.
+6. **Platformer:** Yan kaydırmalı (side-scrolling) platform macerası.
+7. **Arkanoid (Breakout):** Joystick hassasiyetinin ön planda olduğu, seviyeleri giderek zorlaşan tuğla kırma efsanesi.
+8. **Pac-Man:** Özel yapay zeka ile kodlanmış hayaletler ve klasik labirent heyecanı.
+9. **Flappy Bird:** Milisaniyelik tepkiler isteyen bağımlılık yapıcı donanım testi. 148 FPS.
+10. **Snake:** Akıcı mekanikleriyle retro yılan oyunu.
+11. **Launcher (E-OS):** Dönerek açılan animasyonlu carousel menü — PSP/PS3 tarzı UI.
 
 <div align="center">
   <img src="docs/images/arkanoid1.jpg" width="30%" alt="Arkanoid">
@@ -64,11 +69,53 @@ Oyunlar basit birer port değildir; bu cihazın çözünürlüğü ve işlemcisi
 
 ---
 
+## 📸 Screenshot Sistemi
+Her oyunda **BTN_D** (Doom'da **B+D**) ile ekran görüntüsü alınabilir. BMP formatında SD kartın `/screenshots/` klasörüne kaydedilir. `dev_tools.h` tarafından yönetilir.
+
+---
+
 ## 💻 Nasıl Derlenir?
-Bu proje **Arduino IDE / PlatformIO** kullanılarak derlenebilir. Gerekli kütüphaneler:
-- `TFT_eSPI` (Ekran Sürücüsü)
-- `Adafruit_GFX` ve `Adafruit_SH110X` (OLED Sürücüsü)
-*(Pin ayarları `User_Setup.h` dosyası içerisinde tanımlıdır).*
+
+### Gerekli Kütüphaneler
+- `TFT_eSPI` — TFT ekran sürücüsü (ST7735)
+- `U8g2` — OLED ekran sürücüsü (SH1106)
+- `SD` — SD kart erişimi (Arduino core dahil)
+- `Preferences` — NVS yüksek skor kaydı (Arduino core dahil)
+
+### Kurulum Adımları
+1. **TFT_eSPI kurulumu:** `User_Setup.h` dosyasını TFT_eSPI kütüphane klasörüne kopyalayın:
+   ```
+   Windows: C:\Users\<kullanıcı>\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+   ```
+2. **Partitions:** Her oyun klasöründe `partitions.csv` dosyası mevcuttur (16MB Flash, OTA + SPIFFS).
+3. **Board ayarları (Arduino IDE):**
+   - Board: **ESP32S3 Dev Module**
+   - Flash Size: **16MB (128Mb)**
+   - PSRAM: **OPI 8MB**
+   - Partition Scheme: **Custom** (partitions.csv otomatik kullanılır)
+4. **Derleme:** Her oyun kendi klasöründe ayrı bir `.ino` dosyası olarak derlenir. `launcher.ino` ana OS'tir.
+
+### Pin Bağlantıları
+Pin tanımları `hardware_config.h` dosyasında merkezi olarak tanımlıdır.
+
+| Pin | İşlev |
+|-----|-------|
+| 12 | SPI SCK |
+| 11 | SPI MOSI |
+| 42 | SPI MISO |
+| 15 | TFT CS |
+| 10 | SD CS |
+| 41 | TFT DC |
+| 8 | I2C SDA (OLED) |
+| 9 | I2C SCL (OLED) |
+| 1 | Joystick X |
+| 2 | Joystick Y |
+| 18 | Joystick SW |
+| 3 | Buton A |
+| 21 | Buton B |
+| 4 | Buton C |
+| 6 | Buton D |
+| 5 | Buzzer |
 
 ---
 <div align="center">

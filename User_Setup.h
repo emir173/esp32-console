@@ -20,7 +20,7 @@
 #define TFT_DC   41
 #define TFT_RST  -1  
 
-#define USE_HSPI_PORT
+// #define USE_HSPI_PORT  // KALDIRILDI — TFT ve SD ayni SPI'yi paylassin diye
 #define SPI_FREQUENCY  80000000 
 
 #define LOAD_GLCD

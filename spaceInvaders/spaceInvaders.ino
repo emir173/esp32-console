@@ -13,23 +13,12 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <esp_ota_ops.h>
+#include <U8g2lib.h>
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #include <Preferences.h>
-
-// ============ Pin Tanımları ============
-#define JOY_X    1
-#define JOY_Y    2
-#define BTN_A    3
-#define BTN_B    21
-#define BTN_C    4      // OS'a dönüş (her zaman rezerve)
-#define BTN_D    6
-#define BUZZER   5
-#define JOY_SW   18
-
-// ============ SPI Pinleri ============
-#define SPI_SCK  12
-#define SPI_MOSI 11
-#define SPI_MISO 42
+#include "../hardware_config.h"
+#include "../dev_tools.h"
+#include "../GameBase.h"
 
 // ============ Ekran Boyutları (Landscape) ============
 #define SCR_W  160
@@ -51,8 +40,8 @@
 
 #define MAX_PBULLETS  3       // Maks oyuncu mermisi
 #define MAX_EBULLETS  3       // Maks düşman mermisi
-#define PBULLET_SPD   4       // Oyuncu mermi hızı
-#define EBULLET_SPD   2       // Düşman mermi hızı
+#define PBULLET_SPD   120.0f  // FPS60: Oyuncu mermi hızı (piksel/saniye, orijinal ~4px/f @30fps)
+#define EBULLET_SPD   60.0f   // FPS60: Düşman mermi hızı (piksel/saniye, orijinal ~2px/f @30fps)
 
 #define DEADZONE      300     // Joystick ölü bölge
 #define NUM_STARS     30      // Arka plan yıldız sayısı
@@ -61,8 +50,8 @@
 #define INVINCIBLE_MS 1500    // Hasar sonrası dokunulmazlık (ms)
 #define FIRE_COOLDOWN 250     // Ateş bekleme süresi (ms)
 
-#define TARGET_FPS    30
-#define FRAME_MS      (1000 / TARGET_FPS)
+#define TARGET_FPS    60              // FPS60: 30 → 60 FPS'e yükseltildi
+#define FRAME_MS      (1000 / TARGET_FPS)  // FPS60: ~16.67ms frame süresi
 
 // ============ Özel Renkler (RGB565) ============
 #define COL_SPACE     0x0000  // Siyah uzay
@@ -73,6 +62,8 @@
 #define COL_EBULLET   0xF800  // Kırmızı mermi
 #define COL_HUD_LINE  0x2104  // HUD ayırıcı çizgi
 #define COL_HUD_TEXT  0xBDF7  // HUD metin rengi
+#define COL_TITLE_SHADOW 0x0010  // Başlık gölge rengi
+#define COL_RED_DARK     0x8000  // Koyu kırmızı (game over panel iç çerçeve)
 
 // Uzaylı renkleri (satır bazlı - üstten alta)
 #define COL_ALIEN_0   0x07FF  // Cyan   (üst satır - 40 puan)
@@ -136,6 +127,11 @@ unsigned long lastFireMs;
 unsigned long lastEFireMs;
 unsigned long hitTime;
 
+// ============ FPS ============
+uint32_t fpsFrameCount = 0;
+uint32_t fpsStartTime = 0;
+int currentFPS = 0;
+
 // ============ Joystick ============
 int joyCenterX;
 
@@ -145,23 +141,16 @@ int prevBtnB = HIGH;
 
 // ============ V2.1: Ses Ayarı ============
 bool soundEnabled = true;
+// playSound — GameBase.h osPlaySound wrapper (eski API uyumu)
 void playSound(uint16_t freq, uint32_t dur) {
-    if (soundEnabled) { tone(BUZZER, freq, dur); }
+    osPlaySound(freq, dur, soundEnabled);
 }
 
 // ==========================================
-//  OS'a Dönüş Fonksiyonu
+//  OS'a Dönüş Fonksiyonu — GameBase.h wrapper
 // ==========================================
 void returnToOS() {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(10, 60);
-    tft.print("Ana Menuye Donuluyor...");
-    delay(500);
-    const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
-    if (os_part) { esp_ota_set_boot_partition(os_part); }
-    ESP.restart();
+    osReturnToOS(tft);
 }
 
 // ==========================================
@@ -192,9 +181,9 @@ void initAliens() {
     alienGridY = ALIEN_START_Y;
     alienDir = 1;
 
-    // Dalga bazlı başlangıç hızı
-    alienSpeed = 0.25f + (wave - 1) * 0.08f;
-    if (alienSpeed > 1.0f) alienSpeed = 1.0f;
+    // Dalga bazlı başlangıç hızı (FPS60: piksel/saniye cinsinden)
+    alienSpeed = 7.5f + (wave - 1) * 2.4f;     // FPS60: 7.5~30.0 px/s (orijinal 0.25~1.0 px/f @30fps)
+    if (alienSpeed > 30.0f) alienSpeed = 30.0f; // FPS60: Max 30 px/s
 
     alienAnimFrame = false;
     lastAnimMs = millis();
@@ -383,6 +372,14 @@ void drawHUD() {
         canvas.fillTriangle(lx, 8, lx + 4, 1, lx + 8, 8, COL_PLAYER);
     }
 
+    // FPS Sayacı
+    char fpsStr[32];
+    snprintf(fpsStr, sizeof(fpsStr), "FPS:%d", currentFPS);
+    int fpsWidth = strlen(fpsStr) * 6;
+    canvas.setTextColor(TFT_GREEN);
+    canvas.setCursor(128 - fpsWidth, 1);
+    canvas.print(fpsStr);
+
     // Ayırıcı çizgi
     canvas.drawFastHLine(0, HUD_H, SCR_W, COL_HUD_LINE);
 }
@@ -396,25 +393,25 @@ void drawMenu() {
 
     // Başlık gölgesi
     canvas.setTextSize(2);
-    canvas.setTextColor(0x0010);
-    canvas.setCursor(19, 7);
+    canvas.setTextColor(COL_TITLE_SHADOW);
+    canvas.setCursor(53, 7);
     canvas.print("SPACE");
-    canvas.setCursor(7, 25);
+    canvas.setCursor(35, 25);
     canvas.print("INVADERS");
     // Başlık
     canvas.setTextColor(TFT_CYAN);
-    canvas.setCursor(18, 6);
+    canvas.setCursor(52, 6);
     canvas.print("SPACE");
     canvas.setTextColor(TFT_GREEN);
-    canvas.setCursor(6, 24);
+    canvas.setCursor(34, 24);
     canvas.print("INVADERS");
 
     // Dekoratif uzaylılar (menü için basit çizim)
     const uint16_t ac[] = {COL_ALIEN_0, COL_ALIEN_1, COL_ALIEN_2, COL_ALIEN_3};
     bool animF = (millis() / 500) % 2;
     for (int i = 0; i < 4; i++) {
-        int ax = 28 + i * 26;
-        int ay = 50;
+        int ax = 35 + i * 24;
+        int ay = 52;
         canvas.fillRect(ax + 1, ay, 7, 6, ac[i]);
         canvas.fillRect(ax, ay + 1, 9, 4, ac[i]);
         canvas.drawPixel(ax + 2, ay + 2, TFT_BLACK);
@@ -425,25 +422,24 @@ void drawMenu() {
         }
     }
 
-    // Talimatlar
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(22, 72);
-    canvas.print("[A/B] Ates Et");
-    canvas.setCursor(22, 84);
-    canvas.print("[JOY] Hareket");
-    canvas.setTextColor(0xBDF7);
-    canvas.setCursor(22, 100);
+    canvas.setCursor(10, 95);
+    canvas.print("[A] Basla");
+
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(90, 95);
     canvas.print("[B] OS Menu");
 
-    // En yüksek skor
-    if (highScore > 0) {
-        canvas.setTextColor(TFT_YELLOW);
-        canvas.setCursor(22, 114);
-        canvas.print("Rekor: ");
-        canvas.print(highScore);
-    }
+    canvas.setTextColor(TFT_GREEN);
+    canvas.setCursor(10, 110);
+    canvas.print("[JOY] Hareket");
 
+    canvas.setTextColor(TFT_YELLOW);
+    canvas.setCursor(92, 110);
+    canvas.printf("Rekor: %d", highScore);
+
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -456,20 +452,27 @@ void drawWaveClear() {
 
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_GREEN);
-    canvas.setCursor(22, 30);
-    canvas.print("DALGA ");
-    canvas.print(wave);
+    char waveStr[20];
+    sprintf(waveStr, "DALGA %d", wave);
+    int waveW = strlen(waveStr) * 12;
+    canvas.setCursor((SCR_W - waveW) / 2, 30);
+    canvas.print(waveStr);
 
     canvas.setTextColor(TFT_CYAN);
-    canvas.setCursor(20, 55);
-    canvas.print("TEMIZ!");
+    const char* temizStr = "TEMIZ!";
+    int temizW = strlen(temizStr) * 12;
+    canvas.setCursor((SCR_W - temizW) / 2, 55);
+    canvas.print(temizStr);
 
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_YELLOW);
-    canvas.setCursor(45, 85);
-    canvas.print("Skor: ");
-    canvas.print(score);
+    char scoreStr[30];
+    sprintf(scoreStr, "Skor: %d", score);
+    int scoreW = strlen(scoreStr) * 6;
+    canvas.setCursor((SCR_W - scoreW) / 2, 85);
+    canvas.print(scoreStr);
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -481,57 +484,58 @@ void drawGameOver() {
     drawStars();
 
     // Panel
-    canvas.fillRoundRect(15, 12, 130, 104, 5, 0x2104);
-    canvas.drawRoundRect(15, 12, 130, 104, 5, TFT_RED);
-    canvas.drawRoundRect(16, 13, 128, 102, 4, 0x8000);
+    canvas.fillRoundRect(15, 12, 130, 108, 5, COL_HUD_LINE);
+    canvas.drawRoundRect(15, 12, 130, 108, 5, TFT_RED);
+    canvas.drawRoundRect(16, 13, 128, 106, 4, COL_RED_DARK);
 
     // Başlık
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_RED);
-    canvas.setCursor(20, 20);
-    canvas.print("OYUN BITTI");
+    const char* title = "OYUN BITTI";
+    int titleW = strlen(title) * 12;
+    canvas.setCursor((SCR_W - titleW) / 2, 20);
+    canvas.print(title);
 
     // Skor
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
     canvas.setCursor(30, 48);
-    canvas.print("Skor:  ");
+    canvas.print("Skor:   ");
     canvas.setTextColor(TFT_YELLOW);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 42);
     canvas.print(score);
 
-    // Dalga
+    // Rekor
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(30, 65);
-    canvas.print("Dalga: ");
-    canvas.setTextColor(TFT_CYAN);
-    canvas.print(wave);
-
-    // Rekor
-    canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(30, 78);
-    canvas.print("Rekor: ");
+    canvas.setCursor(30, 70);
+    canvas.print("Rekor:  ");
     canvas.setTextColor(TFT_GREEN);
     canvas.setTextSize(2);
+    canvas.setCursor(75, 64);
     canvas.print(highScore);
 
     // Yeni rekor bildirimi
     if (newRecord) {
         canvas.setTextSize(1);
         canvas.setTextColor(TFT_MAGENTA);
-        canvas.setCursor(28, 94);
-        canvas.print("** YENI REKOR! **");
+        const char* nrStr = "YENI REKOR!";
+        int nrW = strlen(nrStr) * 6;
+        canvas.setCursor((SCR_W - nrW) / 2, 85);
+        canvas.print(nrStr);
     }
 
     canvas.setTextSize(1);
-    canvas.setTextColor(0xBDF7);
-    canvas.setCursor(30, 104);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setCursor(30, 98);
     canvas.print("[A] Tekrar Oyna");
     
-    canvas.setCursor(30, 116);
+    canvas.setTextColor(COL_HUD_TEXT);
+    canvas.setCursor(30, 108);
     canvas.print("[B] OS Menu");
 
+    checkScreenshot(canvas);
     canvas.pushSprite(0, 0);
 }
 
@@ -540,8 +544,8 @@ void drawGameOver() {
 // ==========================================
 void setup() {
     // OLED Kapatma ve Buzzer Susturma (Hızlı Başlatma için)
-    pinMode(5, OUTPUT);
-    digitalWrite(5, LOW);
+    pinMode(BUZZER, OUTPUT);
+    digitalWrite(BUZZER, LOW);
     Wire.begin(8, 9);
     Wire.beginTransmission(0x3C);
     Wire.write(0x00);
@@ -566,9 +570,17 @@ void setup() {
     // SPI başlat
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, -1);
 
+    initDevTools(tft);
+
     // Ekran başlatma
     tft.init();
     tft.setRotation(1);   // Landscape: 160x128
+    // TFT donanimini RGB moduna gecir (standart RGB565 sabitler icin)
+    tft.startWrite();
+    tft.writecommand(0x36);  // MADCTL
+    tft.writedata(0xA0);     // MY|MV, BGR bit kapali (RGB modu)
+    tft.endWrite();
+    setScreenshotMode(SCR_RGB_SWAP);
     tft.fillScreen(TFT_BLACK);
 
     // Sprite tamponu (çift tamponlama)
@@ -584,6 +596,7 @@ void setup() {
     initStars();
     state = MENU;
     lastFrameMs = millis();
+    fpsStartTime = millis();
 }
 
 // ==========================================
@@ -603,8 +616,19 @@ void loop() {
 
     // ---- Frame hız kontrolü ----
     unsigned long now = millis();
-    if (now - lastFrameMs < FRAME_MS) return;
+    unsigned long elapsed = now - lastFrameMs;
+    if (elapsed < FRAME_MS) return;
+    float dt = elapsed / 1000.0f;    // FPS60: Delta-Time (saniye cinsinden geçen süre)
+    if (dt > 0.05f) dt = 0.05f;     // FPS60: Lag spike koruması (max 50ms ≈ 20 FPS alt limit)
     lastFrameMs = now;
+
+    // ---- FPS Hesaplama ----
+    fpsFrameCount++;
+    if (now - fpsStartTime >= 1000) {
+        currentFPS = fpsFrameCount;
+        fpsFrameCount = 0;
+        fpsStartTime = now;
+    }
 
     // ---- Buton kenar tespiti ----
     int btnA = digitalRead(BTN_A);
@@ -614,8 +638,7 @@ void loop() {
     prevBtnA = btnA;
     prevBtnB = btnB;
 
-    bool anyPress = pressA || pressB;
-    bool anyHeld = (btnA == LOW || btnB == LOW);
+    bool fireHeld = (btnA == LOW);
 
     // ---- Durum Makinesi ----
     switch (state) {
@@ -625,12 +648,12 @@ void loop() {
         // ======================================
         case MENU:
             drawMenu();
-            if (anyPress) {
+            if (pressA) {
                 playSound(880, 50);
                 resetGame();
             }
             if (!digitalRead(BTN_B)) {
-                delay(200);
+                delay(100); // FPS60: Debounce 200→100ms
                 returnToOS();
             }
             break;
@@ -646,15 +669,15 @@ void loop() {
             if (abs(jx) > DEADZONE) {
                 float factor = (float)(abs(jx) - DEADZONE) / (float)(2048 - DEADZONE);
                 if (factor > 1.0f) factor = 1.0f;
-                float spd = 1.0f + factor * 2.5f;    // 1.0 ~ 3.5 piksel/kare
-                playerX += (jx > 0) ? spd : -spd;
+                float spd = 30.0f + factor * 75.0f;  // FPS60: 30~105 piksel/saniye (orijinal 1.0~3.5 px/f @30fps)
+                playerX += ((jx > 0) ? spd : -spd) * dt; // FPS60: Delta-Time ile hareket
             }
             // Ekran sınırları
             if (playerX < PLAYER_W / 2 + 1) playerX = PLAYER_W / 2 + 1;
             if (playerX > SCR_W - PLAYER_W / 2 - 1) playerX = SCR_W - PLAYER_W / 2 - 1;
 
             // === Oyuncu Ateşi (basılı tutunca 250ms aralıkla) ===
-            if (anyHeld && now - lastFireMs >= FIRE_COOLDOWN) {
+            if (fireHeld && now - lastFireMs >= FIRE_COOLDOWN) {
                 // Aktif mermi sayısını kontrol et
                 int activePB = 0;
                 for (int i = 0; i < MAX_PBULLETS; i++)
@@ -677,7 +700,7 @@ void loop() {
             // === Oyuncu Mermilerini Güncelle ===
             for (int i = 0; i < MAX_PBULLETS; i++) {
                 if (!pBullets[i].active) continue;
-                pBullets[i].y -= PBULLET_SPD;
+                pBullets[i].y -= PBULLET_SPD * dt; // FPS60: Delta-Time ile mermi hareketi
 
                 // Ekrandan çıktı mı?
                 if (pBullets[i].y < HUD_H) {
@@ -704,12 +727,12 @@ void loop() {
                             score += ALIEN_POINTS[r % 4];
                             playSound(1200, 40);
 
-                            // Kalan uzaylı azaldıkça hız artar
-                            float baseSpd = 0.25f + (wave - 1) * 0.08f;
+                            // FPS60: Kalan uzaylı azaldıkça hız artar (piksel/saniye)
+                            float baseSpd = 7.5f + (wave - 1) * 2.4f;  // FPS60: orijinal 0.25+wave*0.08 @30fps
                             int total = ALIEN_ROWS * ALIEN_COLS;
                             float speedMul = 1.0f + (float)(total - alienCount) / (float)total * 2.5f;
                             alienSpeed = baseSpd * speedMul;
-                            if (alienSpeed > 3.0f) alienSpeed = 3.0f;
+                            if (alienSpeed > 90.0f) alienSpeed = 90.0f; // FPS60: Max 90 px/s (orijinal 3.0 @30fps)
 
                             hit = true;
                         }
@@ -731,7 +754,7 @@ void loop() {
             }
 
             // === Uzaylı Hareketi ===
-            alienGridX += alienSpeed * alienDir;
+            alienGridX += alienSpeed * alienDir * dt; // FPS60: Delta-Time ile uzaylı hareketi
 
             // Kenar kontrolü — canlı uzaylıların sınırlarına göre
             int leftC, rightC, topR, botR;
@@ -820,7 +843,7 @@ void loop() {
             // === Düşman Mermilerini Güncelle ===
             for (int i = 0; i < MAX_EBULLETS; i++) {
                 if (!eBullets[i].active) continue;
-                eBullets[i].y += EBULLET_SPD;
+                eBullets[i].y += EBULLET_SPD * dt; // FPS60: Delta-Time ile düşman mermisi
 
                 // Ekrandan çıktı mı?
                 if (eBullets[i].y > SCR_H) {
@@ -895,6 +918,7 @@ void loop() {
             drawHUD();
 
             // Sprite'ı ekrana bas
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             break;
         }
@@ -955,30 +979,39 @@ void loop() {
             // HUD
             drawHUD();
             
-            // Üzerine karartma ve menü
-            canvas.fillRect(30, 40, 100, 50, COL_SPACE);
-            canvas.drawRect(30, 40, 100, 50, TFT_WHITE);
+            // Premium PAUSE Menüsü
+            canvas.fillRoundRect(25, 35, 110, 60, 5, tft.color565(0, 30, 0));
+            canvas.drawRoundRect(25, 35, 110, 60, 5, TFT_GREEN);
+            
+            canvas.setTextSize(2);
+            canvas.setTextColor(TFT_YELLOW);
+            canvas.setCursor(50, 42); 
+            canvas.print("PAUSE");
             
             canvas.setTextSize(1);
             canvas.setTextColor(TFT_WHITE);
-            canvas.setCursor(65, 48); canvas.print("PAUSE");
-            canvas.setTextColor(TFT_YELLOW);
-            canvas.setCursor(42, 62); canvas.print("[A] Devam Et");
-            canvas.setCursor(42, 74); canvas.print("[B] OS Menu");
+            canvas.setCursor(35, 65); 
+            canvas.print("[A] Devam Et");
             
+        canvas.setTextColor(COL_HUD_TEXT);
+        canvas.setCursor(35, 78); 
+        canvas.print("[B] OS Menu");
+            
+            checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             
             if (pressA) {
                 playSound(800, 50);
-                delay(200);
+                delay(100); // FPS60: Debounce 200→100ms
                 state = PLAYING;
                 lastFrameMs = millis();
             }
             if (pressB) {
                 playSound(400, 50);
-                delay(200);
+                delay(100); // FPS60: Debounce 200→100ms
                 returnToOS();
             }
             break;
     }
 }
+

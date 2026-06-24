@@ -2,22 +2,65 @@
 //  EMİR DOOM V7.8 — OS UPDATE
 //  Özellikler: Saf FreeRTOS İzolasyonu, Çökmeyen Task Yapısı, OLED/TFT Ayrımı
 // ============================================================
+//  Bu proje, ESP32-S3 tabanlı bir el yapımı oyun konsolunda DOOM'un
+//  raycasting tabanlı bir klonunu çalıştırır. Çift çekirdek (dual-core)
+//  mimarisinden faydalanılarak oyun mantığı ve ekran çizimi ayrı task'lara
+//  bölünmüştür. PSRAM üzerinde triple-buffering ile tear-free (yırtılmasız)
+//  görüntü elde edilir.
+// ============================================================
+
+// ============================================================
+//  PRAGMA GCC OPTIMIZE
+//  O3: Maksimum optimizasyon (hız odaklı, kod boyutu artar).
+//  unroll-loops: Döngüleri açarak döngü başyükünü (branch/counter) azaltır.
+//  Raycasting ve texture mapping gibi dar geçitlerde ciddi FPS artışı sağlar.
+//  IRAM_ATTR ile birlikte kullanıldığında özellikle TaskEngine'de etkili olur.
+// ============================================================
+#pragma GCC optimize ("O3")
+#pragma GCC optimize ("unroll-loops")
+
+// TFT_eSPI: TFT ekrana hızlı piksel/imagen basmak için kullanılan grafik kütüphanesi
 #include <TFT_eSPI.h>
+// SPI: SD kart ve TFT ortak SPI veriyolunu paylaşır (farklı CS pinleri ile)
 #include <SPI.h>
+// SD: BMP texture'ları ve TITLEPIC'i SD karttan okumak için
 #include <SD.h>
+// Wire: OLED (SH1106) I2C haberleşmesi için (TaskRadar kullanır)
 #include <Wire.h>
+// U8g2lib: OLED monochrome ekrana radar haritasını çizen kütüphane
 #include <U8g2lib.h>
+// math.h: sqrt, sin, atan2, fabs gibi raycasting ve fizik hesapları için
 #include <math.h>
+// FreeRTOS: Görev (task) oluşturma, çekirdeğe sabitleme ve zamanlama için
 #include <freertos/FreeRTOS.h>
+// semphr: Mutex (karşılıklı dışlama) — çift çekirdek veri çakışmasını önler
 #include <freertos/semphr.h>
+// Update.h / esp_ota_ops: OTA (Over-The-Air) bölümleri ve boot partition yönetimi
 #include <Update.h>
 #include <esp_ota_ops.h>
+// Preferences: NVS (Non-Volatile Storage) üzerinden ses ayarı gibi kalıcı veri okuma
 #include <Preferences.h>
 
+// hardware_config.h: Donanım pin tanımları (TFT_CS, SD_CS, BTN_*, JOY_*, BUZZER, SPI_*)
+// Projenin diğer .ino dosyalarıyla paylaşılan ortak pin haritası
+#include "../hardware_config.h"
+// dev_tools.h: Geliştirici araçları — takeScreenshotFB, checkScreenshotFB, setScreenshotMode, initDevTools
+// Ekran görüntüsü alma ve debug yardımcıları buradan gelir
+#include "../dev_tools.h"
+
+// TFT_eSPI ekran nesnesi — ana renkli TFT (SPI üzerinden veri alır)
 TFT_eSPI tft = TFT_eSPI();
 
+// OLED nesnesi — SH1106 128x64 monochrome ekran, yazılım I2C (SDA=9, SCL=8)
+// Radar/mini-harita buraya çizilir, TFT'den tamamen bağımsız çalışır
 U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(U8G2_R0, 9, 8, U8X8_PIN_NONE);
 
+// ============================================================
+//  returnToOS — Ana menüye (OS) dönmek için ESP32'yi yeniden başlatır.
+//  Çünkü bu program standalone (tek başına) çalışır; OS menüsü ayrı bir
+//  sketch'tedir. Bu yüzden restart ile OS'a dönüş simüle edilir.
+//  Parametre: yok. Return: yok.
+// ============================================================
 void returnToOS() {
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_WHITE);
@@ -28,32 +71,43 @@ void returnToOS() {
     ESP.restart();
 }
 
-// --- YENİ SPI OTOBANI (MISO 42) ---
-#define SPI_SCK  12
-#define SPI_MOSI 11
-#define SPI_MISO 42  // <-- KOPUK 13 YERİNE 42 DEVREDE!
-
-#define TFT_CS   15
-#define SD_CS    10
-#define JOY_X    1
-#define JOY_Y    2
-#define JOY_SW   18
-#define BTN_A    3   
-#define BTN_B    21
-#define BTN_C    4  
-#define BTN_D    6    
-#define BUZZER   5   
-
-#define SW 160 
-#define SH 104 
+// ============================================================
+//  EKRAN GEOMETRY'Sİ VE TRIPLE BUFFER (ÜÇLÜ TAMpon)
+//  SW/SH: Oyun alanı çözünürlüğü (160x104). Alt 24 satır HUD'a ayrılır.
+//  fb[3]: Üç adet framebuffer. PSRAM'de tutulur (her biri ~33KB).
+//
+//  Triple-buffering mantığı:
+//   - fb_render : TaskEngine'in ŞU AN yazdığı buffer (Core 0)
+//   - fb_ready  : Yazımı tamamlanmış, TaskDisplay'in beklediği buffer
+//   - fb_display: TaskDisplay'in TFT'ye bastığı buffer (Core 1)
+//  Her zaman 3 farklı buffer kullanıldığı için iki çekirdek asla aynı
+//  belleğe erişmez -> tear-free ve kilitlenmesiz (lock-free-ish) çizim.
+//  fb_swap_mutex: bu üç indeksin atomik takası için kullanılan mutex.
+//  fb_ready=-1 başlangıçta "hazır frame yok" anlamına gelir.
+// ============================================================
+#define SW 160
+#define SH 104
 uint16_t* fb[3];
-volatile int8_t fb_render = 0;
-volatile int8_t fb_ready = -1;
-volatile int8_t fb_display = 1;
-SemaphoreHandle_t fb_swap_mutex;
+volatile int8_t fb_render = 0;    // Engine'in yazdığı buffer indeksi
+volatile int8_t fb_ready = -1;    // Hazır (tamamlanmış) frame indeksi; -1 = yok
+volatile int8_t fb_display = 1;   // Display'in bastığı buffer indeksi
+SemaphoreHandle_t fb_swap_mutex;  // Buffer takasını atomik yapan mutex
 
-float zBuffer[SW]; 
+// zBuffer: Her dikey sütun için duvara olan dik mesafe (perpendicular distance).
+// Sprite çiziminde, sprite'ın duvarın arkasında kalıp kalmadığını belirler.
+float zBuffer[SW];
+// camXTable: Her piksel sütunu için kamera düzlemi koordinatı (-1..+1).
+// setup()'ta önceden hesaplanır, raycasting döngüsünde tekrar tekrar hesaplanmaz.
+float camXTable[SW];
 
+// ============================================================
+//  TEXTURE ATLAS SİSTEMİ
+//  TEX_W/TEX_H: Her texture 64x64 piksel (klasik DOOM boyutu).
+//  MAX_TEX: Maksimum 50 adet texture slot'u (duvarlar, düşmanlar, silahlar, eşyalar).
+//  tex[]: PSRAM'de ayrılan texture buffer'ları. İndeks = texture ID.
+//         Örn: tex[1]=duvar1, tex[22]=zombi duruş karesi, tex[14]=tabanca bekle.
+//  sdReady: SD kartın başarıyla başlatıldığını belirten bayrak.
+// ============================================================
 #define TEX_W 64
 #define TEX_H 64
 #define MAX_TEX 50 
@@ -63,24 +117,55 @@ bool sdReady = false;
 // 0xDEADBEEF Bootloader mekanizması iptal (Standalone Game)
 
 // Çift Çekirdek Güvenliği için Mutex Kilidi ve Task İşaretçileri
+// gameMutex: TaskEngine oyun verisini güncellerken TaskRadar'ın aynı veriyi
+// okumasını engeller. Radar, kopyalama öncesi mutex'i alır, çakışma olmaz.
 SemaphoreHandle_t gameMutex;
 
 
+// MW/MH: Harita 32x32 kare. Klasik raycasting grid boyutu.
 #define MW 32
 #define MH 32
+// MAP: Aktif seviyenin haritası. 0=boş, 1-5=duvar, 6=kapı, 7=kilitli kapı, 8=çıkış, 31=gizli duvar
 uint8_t MAP[MH][MW];
+
+// ============================================================
+//  RGB_FIX — Renk kanalı sıralamasını TFT'ye göre düzeltir.
+//  TFT_eSPI'nin color565 fonksiyonu R,G,B sıralı bekler; ancak bu ekran
+//  TFT_BGR_ORDER modunda çalıştığı için R ve B kanalları yer değiştirmiş
+//  görünür. Bu fonksiyon, color565'e (b, g, r) sıralı geçirerek R/B swap
+//  telafisini yapar. Böylece BMP'lerdeki renkler ekranda doğru görünür.
+//  Parametreler: r,g,b (0-255 arası kanal değerleri).
+//  Return: 16-bit RGB565 renk değeri.
+// ============================================================
 uint16_t RGB_FIX(uint8_t r, uint8_t g, uint8_t b) { return tft.color565(b, g, r); }
 
-// HUD Cache Değişkenleri
+// HUD Cache Değişkenleri — Sadece değer değiştiğinde ekrana tekrar basmak için
+// (örn: ammo 75'te sabitken her frame yeniden çizilmez). lastInfState=INF modu bayrağı
 int lastAmmo = -1, lastHp = -1, lastArmor = -1, lastFps = -1;
 bool lastInfState = false;
 
-// --- V2.1: Ses Ayarı ---
+// --- V2.1: Ses Ayarı --- (NVS'ten okunur, kapatılabilir)
 bool soundEnabled = true;
+
+// ============================================================
+//  playSound — Buzzer üzerinden basit ton üretir.
+//  freq: frekans (Hz), dur: süre (ms). Ses kapalıysa hiçbir şey yapmaz.
+//  Return: yok.
+// ============================================================
 void playSound(uint16_t freq, uint32_t dur) {
     if (soundEnabled) { tone(BUZZER, freq, dur); }
 }
 
+// ============================================================
+//  HARİTA DİZİLERİ (3 Seviye)
+//  Her biri 32x32 kare. Değer anlamları:
+//   0  = boş/zemin (yürünebilir)
+//   1-5= duvar çeşitleri (texture 1-5'e karşılık gelir)
+//   6  = normal kapı (BTN_B ile açılır, haritadan silinir)
+//   7  = kilitli kapı (anahtar gerektirir, hasKey ile açılır)
+//   8  = çıkış kapısı (sonraki seviyeye geçiş)
+//   31 = gizli duvar (gizli bölüm açılınca 0'a dönüşür)
+// ============================================================
 // Harita Dizileri
 const uint8_t LEVEL1[MH][MW] = {
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
@@ -117,6 +202,7 @@ const uint8_t LEVEL1[MH][MW] = {
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
 };
 
+// LEVEL2: "DEIMOS — The Shores of Hell" teması. Daha açık alanlar ve 2=tuğla duvar kullanımı.
 const uint8_t LEVEL2[MH][MW] = {
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
@@ -153,6 +239,7 @@ const uint8_t LEVEL2[MH][MW] = {
 };
 
 
+// LEVEL3: "CEHENNEM — Inferno" teması. Labirentvari koridorlar, 8=çıkış kapısı ortada.
 const uint8_t LEVEL3[MH][MW] = {
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
@@ -188,8 +275,28 @@ const uint8_t LEVEL3[MH][MW] = {
 {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
 };
 
+// ============================================================
+//  AnimState — Düşman/sprite animasyon durum makinesi (state machine).
+//  IDLE   : duruyor (oyuncuyu henüz fark etmedi)
+//  WALK   : oyuncuya doğru yürüyor/kovaliyor (chase)
+//  ATTACK : saldiriyor (isrik, ates veya yakin dovus)
+//  HIT    : hasar aldi, kisa sure geri tepiyor
+//  DYING  : olum animasyonu oynuyor (2 kare)
+//  DEAD   : oldu, ceset yerde sabit kalir
+// ============================================================
 enum AnimState : uint8_t { ANIM_IDLE=0, ANIM_WALK=1, ANIM_ATTACK=2, ANIM_HIT=3, ANIM_DYING=4, ANIM_DEAD=5 };
 
+// ============================================================
+//  Sprite — Hem dusmanlari hem esyalari hem mermileri temsil eden genel yapi.
+//  x,y     : harita uzerindeki kayan nokta konumu
+//  type    : sprite turu (5=zombi, 14=baron, 17=pinky, 15=varil, 9=mermi kutusu,
+//            10=can kutusu, 11=anahtar, 43=armor, 12=dusman mermisi, 13=sekme mermisi)
+//  state   : -1=gizli (gizli duvar acilana dek), 0=olu/inaktif, >=1=aktif
+//  dx,dy   : mermiler icin hareket yonu vektoru
+//  hp      : dusmanin cani (esyalarda 0)
+//  animState/animFrame/animTimer: animasyon durum makinesi ve kare zamanlamasi
+//  lastFireTime: her dusmanin kendi mermi sayaci (spam'i onler)
+// ============================================================
 struct Sprite { 
     float x, y; 
     int type; 
@@ -202,26 +309,42 @@ struct Sprite {
     uint32_t lastFireTime; // YENİ EKLENDİ: Her düşmanın kendi mermi sayacı
 };
 
+// Maksimum 140 sprite ayni anda bulunabilir (dusmanlar + esyalar + mermiler)
 #define NUM_SPRITES 140
 Sprite sprites[NUM_SPRITES];
 
+// --- OYUNCU VE KAMERA DEĞİŞKENLERİ ---
+// px,py : oyuncunun harita konumu (kayan nokta)
+// dirX,dirY : oyuncunun baktığı yön vektörü (birim vektör)
+// planeX,planeY : kamera düzlemi vektörü (FOV'u belirler, 0.66 = ~90 derece)
 float px = 1.5, py = 1.5; 
 float dirX = 1, dirY = 0;
 float planeX = 0, planeY = 0.66;
+// Joystick kalibrasyon merkezi (başlangıçta 2048 = 12-bit ADC orta değeri)
 int joyCenterX = 2048, joyCenterY = 2048;
+// TaskJoy tarafından sürekli güncellenen ham analog değerler (volatile: çift çekirdek)
+volatile int joyRawX = 0, joyRawY = 0;
 
+// --- ZAMANLAYICI ve İSTATİSTİK ---
+// lastFrame: delta time (dt) hesabı için önceki frame zamanı
+// fpsTimer/frameCount/fps: saniyede frame sayacı
 uint32_t lastFrame = 0, fpsTimer = 0;
 int fps = 0, frameCount = 0;
+// Oyuncu istatistikleri: hp=can, ammo=mermi, armor=zırh
 int hp = 100, ammo = 75, armor = 0; 
-int currentLevel = 1; 
-bool hasKey = false;
+int currentLevel = 1; // Aktif seviye (1-3)
+bool hasKey = false;  // Kilitli kapıları açmak için anahtar bayrağı
+// Çeşitli cooldown/zamanlama sayaçları:
+// fireT=son atış, lastDamageTime=son hasar (kırmızı ekran flash'ı), sonKullanma=son BTN_B kullanımı
+// shieldSawTime=son kalkan-testere vuruşu, lastEnemyFire=son düşman atışı, shieldStartTime=kalkan açılış anı
 uint32_t fireT = 0, lastDamageTime = 0, sonKullanma = 0;
 uint32_t shieldSawTime = 0, lastEnemyFire = 0;
 uint32_t shieldStartTime = 0;
-bool lastShieldState = false;
-uint32_t meleeTimer = 0;
+bool lastShieldState = false;   // Kalkan (BTN_D) önceki durumu (edge detection için)
+uint32_t meleeTimer = 0;        // Yakin dovus (B) animasyon zamanlayicisi
 
 // --- MASTER OS DURUM MAKİNESİ ---
+// Oyunun genel durumunu belirler. TaskEngine bu duruma göre farklı dallar çalıştırır.
 enum GameState {
     STATE_BOOT,        // Açılış: TITLEPIC göster
     STATE_MASTER_MENU, // Ana OS menüsü (Doom, Snake, Bootloader)
@@ -233,24 +356,26 @@ enum GameState {
 };
 volatile GameState gameState = STATE_BOOT;
 
+// --- TITLE / MENÜ DEĞİŞKENLERİ ---
 bool titleDrawn = false;
 uint32_t bootStartTime = 0;
-uint16_t *titlePicBuf = nullptr;
+uint16_t *titlePicBuf = nullptr;  // TITLEPIC.bmp'nin PSRAM'deki tam kopyası (160x128)
 
 int masterMenuSel = 0;    // 0=DOOM, 1=SNAKE, 2=BOOTLOADER
 bool masterMenuDrawn = false;
 
 // DOOM Menü değişkenleri
-int menuSelection = 0;       
-int levelSelectIdx = 0;      
-bool inLevelSelect = false;  
-bool menuDrawn = false;      
+int menuSelection = 0;       // Ana menüde seçili öge (0=Yeni Oyun, 1=Seviye Seç)
+int levelSelectIdx = 0;      // Seviye seçim ekranında seçili seviye (0-2)
+bool inLevelSelect = false;  // Seviye seçim alt-menüsünde miyiz?
+bool menuDrawn = false;      // Menü tamamen yeniden çizilsin mi? (önbellek bayrağı)
 
 // SNAKE Oyunu değişkenleri
+// SNAKE_W/H: yılan oyun alanı hücre sayısı. CS=5 piksel/hücre ile ekrana çizilir.
 #define SNAKE_W 32
 #define SNAKE_H 26  
 struct SnakeCell { int8_t x, y; };
-#define SNAKE_MAX 200
+#define SNAKE_MAX 200          // Maksimum yılan uzunluğu
 SnakeCell snakeBody[SNAKE_MAX];
 int snakeLen = 3;
 int8_t snakeDirX = 1, snakeDirY = 0;
@@ -260,13 +385,25 @@ int snakeScore = 0;
 bool snakeDead = false;
 bool snakeDrawn = false;
 
+// weaponType: 0=tabanca (hızlı, tek hedef), 1=pompalı (yavaş, çoklu hedef, 3 mermi)
 int weaponType = 0; 
 
+// ============================================================
+//  DÜŞMAN ANİMASYON KARE TABLOSU
+//  Her satır [animState] -> {kare0, kare1} texture ID çifti.
+//  animFrame & 1 ile 0/1 arasında değişerek yürüme vb. iki kare animasyon sağlar.
+//  ZOMBIE(5)=z_, PINKY(17)=p_, BARON(14)=b_, VARIL(15)=v_ BMP'lerine karşılık gelir.
+// ============================================================
 const uint8_t ZOMBIE_FRAMES[][2] = {{22,22}, {22,23}, {24,24}, {22,22}, {25,26}, {26,26}};
 const uint8_t PINKY_FRAMES[][2]  = {{27,27}, {28,29}, {30,44}, {27,27}, {32,33}, {33,33}};
 const uint8_t BARON_FRAMES[][2]  = {{34,34}, {34,35}, {36,36}, {37,37}, {38,39}, {39,39}};
 const uint8_t VARIL_FRAMES[][2]  = {{40,40}, {40,40}, {40,40}, {40,40}, {41,42}, {42,42}};
 
+// ============================================================
+//  getEnemyTexID — Sprite'ın tür ve animasyon durumuna göre texture ID döndürür.
+//  spriteIndex: sprites[] dizisindeki indis.
+//  Return: çizimde kullanılacak tex[] indeksi. Düşman değilse type直接 döner.
+// ============================================================
 int getEnemyTexID(int spriteIndex) {
     Sprite &s = sprites[spriteIndex];
     if(s.type == 5) return ZOMBIE_FRAMES[s.animState][s.animFrame & 1];
@@ -276,6 +413,12 @@ int getEnemyTexID(int spriteIndex) {
     return s.type;
 }
 
+// ============================================================
+//  initSprite — Belirtilen indeksteki sprite'ı başlatır (konum, tür, can atar).
+//  i: sprites[] indis. x,y: harita konumu. type: sprite türü. state: aktiflik.
+//  Düşman türlerine göre hp ayarlanır: zombi=30, pinky=60, baron=150, varil=10.
+//  Return: yok.
+// ============================================================
 void initSprite(int i, float x, float y, int type, int state) {
     sprites[i].x = x; sprites[i].y = y; sprites[i].type = type; sprites[i].state = state;
     sprites[i].dx = 0; sprites[i].dy = 0;
@@ -289,6 +432,12 @@ void initSprite(int i, float x, float y, int type, int state) {
     else sprites[i].hp = 0;
 }
 
+// ============================================================
+//  drawStaticHUD — Oyun altındaki sabit HUD çerçevesini tek seferlik çizer.
+//  160x24 piksellik gri bant; AMMO/HEALTH/ARMOR etiketleri ve ayraç çizgileri.
+//  Dinamik değerler (sayılar) TaskDisplay'de yalnızca değişince güncellenir.
+//  Return: yok.
+// ============================================================
 void drawStaticHUD() {
   int hy = SH; 
   tft.fillRect(0, hy, 160, 24, RGB_FIX(40, 40, 40));
@@ -305,17 +454,30 @@ void drawStaticHUD() {
   tft.setCursor(118, hy + 4); tft.print("ARMOR");
 }
 
+// ============================================================
+//  loadLevel — Seçilen seviyeyi yükler: haritayı kopyalar, oyuncuyu ve
+//  tüm sprite'ları (düşmanlar, eşyalar, variller) başlangıç konumlarına yerleştirir.
+//  level: 1, 2 veya 3. Her seviyenin kendi haritası (LEVEL1/2/3) ve sprite listesi vardır.
+//  HUD önbelleğini sıfırlar (yeni seviyede değerler yeniden çizilsin diye).
+//  Return: yok.
+// ============================================================
 void loadLevel(int level) {
     // HUD'u zorla yenilemek için resetle
     lastAmmo = -1; lastHp = -1; lastArmor = -1; lastFps = -1; lastInfState = false;
     
     hasKey = false; 
+    // Tüm sprite'ları temizle (state=0), sonra seviyeye göre yeniden doldur
     for(int i=0; i<NUM_SPRITES; i++) initSprite(i, 0, 0, 0, 0); 
+    // Seviye haritasını aktif MAP dizisine kopyala
     for(int y=0; y<MH; y++) for(int x=0; x<MW; x++) { 
         if(level == 1) MAP[y][x] = LEVEL1[y][x];
         else if(level == 2) MAP[y][x] = LEVEL2[y][x];
         else if(level == 3) MAP[y][x] = LEVEL3[y][x];
     }
+    // --- SEVİYE 1: PHOBOS ---
+    // Oyuncu sol-üst köşeye yerleşir; sprite'lar harita boyunca dağıtılır.
+    // type kodları: 5=zombi, 14=baron, 17=pinky, 15=varil, 9=mermi, 10=can,
+    //               11=anahtar, 43=armor, 10=can
     if(level == 1) {
     px = 5.5; py = 1.5; dirX = 1; dirY = 0; planeX = 0; planeY = 0.66;
 
@@ -415,6 +577,7 @@ initSprite(92, 19.5, 30.5, 14, 1);
 initSprite(93, 24.5, 30.5, 14, 1);
 
     } else if(level == 2) {
+       // --- SEVİYE 2: DEIMOS ---
        px = 15.5; py = 1.5; dirX = 1; dirY = 0; planeX = 0; planeY = 0.66;
 
 initSprite(0, 14.5, 2.5, 43, 1);
@@ -511,7 +674,7 @@ initSprite(90, 12.5, 27.5, 5, 1);
 initSprite(91, 25.5, 27.5, 15, 1);
 
     } else if (level == 3) {
-    
+    // --- SEVİYE 3: CEHENNEM ---
     px = 15.5; py = 17.5; dirX = 1; dirY = 0; planeX = 0; planeY = 0.66;
 
 initSprite(0, 1.5, 1.5, 10, 1);
@@ -648,6 +811,14 @@ initSprite(129, 30.5, 30.5, 10, 1);
 }
 }
 
+// ============================================================
+//  makeTex — Prosedürel (SD kart gerektirmeyen) texture üretir.
+//  id=8 : yeşil düz yüzey (zemin bitki örtüsü)
+//  id=9,10,11: siyah (BMP ile doldurulacak boş slot, çöp veriyi engeller)
+//  id=12: düşman ateş topu (turuncu+ kırmızı halka, dairesel gradient)
+//  id=13: sekme (parry) mermisi (camgöbeği mavi top)
+//  Return: yok. tex[id][] içerisini yazar.
+// ============================================================
 void makeTex(int id) {
   // YENİ EKLENDİ: Eğer bu id 8,12,13 değilse varsayılan olarak siyah/boş yap (Çöp veriyi engelle)
   if(id == 9 || id == 10 || id == 11) {
@@ -676,6 +847,15 @@ void makeTex(int id) {
 
 // LittleFS kopyalama fonksiyonu TAMAMEN KALDIRILDI! Artık direkt SD'den PSRAM'a okuyacağız.
 
+// ============================================================
+//  loadBMP — SD karttaki bir 24-bit BMP dosyasını tex[id] buffer'ına yükler.
+//  filename: SD kök dizinindeki BMP yolu (örn "/duvar1.bmp").
+//  id: tex[] slot indeksi. fileBuf: dosyayı tek seferde okumak için PSRAM tamponu.
+//  BMP 64x64, 24bpp olmalıdır. bottom-up/top-down satır sırası otomatik algılanır.
+//  Siyah pikseller (0,0,0) çok koyu griye çevrilir (siyah = saydam rengi bozar).
+//  Mor (r>200, g<55, b>200) pikseller saydam (0x0000) yapılır — chroma-key.
+//  Return: başarı=true, hata=false.
+// ============================================================
 bool loadBMP(const char* filename, int id, uint8_t* fileBuf) {
   if (!tex[id]) return false;
   
@@ -713,6 +893,17 @@ bool loadBMP(const char* filename, int id, uint8_t* fileBuf) {
   return true;
 }
 
+// ============================================================
+//  explodeBarrel — Bir varili patlatır ve zincirleme etkiyi uygular.
+//  barrelIdx: patlatılan varilin sprite indis. now: güncel zaman (ms).
+//  Mantık:
+//   - Varil DYING durumuna alınır, patlama sesi çalınır.
+//   - 2.5 birim yarıçap içindeki diğer variller REKÜRSİF patlar (zincirleme).
+//   - Aynı yarıçaptaki düşmanlara 50 hasar verir (ölürse DYING, yoksa HIT).
+//   - Oyuncu kalkansızsa ve yarıçap içindeyse mesafeye göre azalan hasar alır;
+//     zırh varsa hasarın yarısı zırhtan emilir.
+//  Return: yok.
+// ============================================================
 void explodeBarrel(int barrelIdx, uint32_t now) {
     if(sprites[barrelIdx].animState == ANIM_DYING || sprites[barrelIdx].animState == ANIM_DEAD) return;
     float bx = sprites[barrelIdx].x, by = sprites[barrelIdx].y;
@@ -751,6 +942,15 @@ void explodeBarrel(int barrelIdx, uint32_t now) {
     }
 }
 
+// ============================================================
+//  updateAnimations — Tüm sprite'ların animasyon durum makinesini ilerletir.
+//  now: güncel zaman (ms). Her sprite için elapsed süresine göre kare değiştirir.
+//  WALK: iki kare arasında belirli aralıklarla geçiş (zombi=200ms, pinky=150ms, baron=300ms).
+//  ATTACK: 300ms sonra WALK'a döner; pinky 150ms'de ikinci kareye geçer.
+//  HIT: 150ms sonra hp<=0 ise DYING, değilse WALK'a döner.
+//  DYING: 250ms'de 2 kare oynar, sonra DEAD'e geçer. Varil 150ms (hızlı patlama).
+//  Return: yok.
+// ============================================================
 void updateAnimations(uint32_t now) {
     const uint16_t WALK_MS[] = {200, 150, 300}; 
     const uint16_t DYING_MS = 250;
@@ -797,6 +997,15 @@ void updateAnimations(uint32_t now) {
 // ==========================================
 // ÇEKİRDEK 0: YARDIMCI SİSTEMLER (I2C ve RADAR)
 // ==========================================
+// ============================================================
+//  TaskRadar — OLED ekrana mini radar/harita çizen FreeRTOS task (Core 1, düşük öncelik).
+//  Sadece STATE_PLAYING iken çalışır; diğer durumlarda uyuyarak CPU tasarrufu yapar.
+//  gameMutex ile oyuncu/harita/sprite verisinin güvenli kopyasını alır (çift çekirdek
+//  çakışmasını önler). I2C 400kHz'e sabitlenir ve power-save her döngüde kapatılır
+//  (OLED'in kendiliğinden uykuya dalması engellenir).
+//  Render: duvarlar=dolu kare, kapılar=boş kare, düşmanlar=kare, eşyalar=piksel,
+//  oyuncu=disk + yön çizgisi. 80ms'de bir yenilenir (~12fps radar).
+// ============================================================
 void TaskRadar(void * pvParameters) {
   oled.begin();
   
@@ -842,6 +1051,13 @@ void TaskRadar(void * pvParameters) {
   }
 }
 
+// ============================================================
+//  loadTitlePic — SD'den /TITLEPIC.bmp'i okuyup titlePicBuf'a (160x128) yükler.
+//  fileBuf: dosyayı tek seferde okumak için PSRAM tamponu.
+//  BMP 160x128, 24bpp olmalı. Renkler RGB_FIX ile düzeltilerek yazılır.
+//  Menüde arka plan olarak kullanılır.
+//  Return: başarı=true, hata=false.
+// ============================================================
 bool loadTitlePic(uint8_t* fileBuf) {
     if (!titlePicBuf) return false;
     
@@ -883,6 +1099,7 @@ bool loadTitlePic(uint8_t* fileBuf) {
     return true;
 }
 
+// drawIconDoom — Ana menüde DOOM ikonu (artı işareti + daire). sel=seçili mi.
 void drawIconDoom(int x, int y, bool sel) {
     uint16_t c = sel ? RGB_FIX(255, 80, 0) : RGB_FIX(80, 20, 0);
     tft.drawCircle(x+12, y+12, 8, c);
@@ -893,6 +1110,7 @@ void drawIconDoom(int x, int y, bool sel) {
     tft.drawPixel(x+12, y+12, c);
 }
 
+// drawIconSnake — Ana menüde SNAKE ikonu (yılan başı/gövde/kuyruk + göz).
 void drawIconSnake(int x, int y, bool sel) {
     uint16_t c = sel ? RGB_FIX(0, 255, 80) : RGB_FIX(0, 80, 20);
     tft.fillRect(x+4, y+14, 16, 6, c); // Kuyruk
@@ -901,6 +1119,7 @@ void drawIconSnake(int x, int y, bool sel) {
     tft.drawPixel(x+8, y+8, TFT_BLACK); // Goz
 }
 
+// drawIconSystem — Ana menüde sistem/SD kart ikonu (kart + çentik).
 void drawIconSystem(int x, int y, bool sel) {
     uint16_t c = sel ? RGB_FIX(80, 180, 255) : RGB_FIX(20, 60, 100);
     tft.drawRect(x+5, y+4, 14, 16, c);
@@ -910,6 +1129,12 @@ void drawIconSystem(int x, int y, bool sel) {
     tft.fillRect(x+13, y+6, 2, 4, c);
 }
 
+// ============================================================
+//  drawMasterMenu — Ana OS menüsünü (DOOM/SNAKE) TFT'ye çizer.
+//  fullRedraw: tam ekran yeniden çiz (ilk çizim); false ise sadece kartları güncelle.
+//  Her öge: ikon + başlık + alt başlık, seçili öge vurgu renkli kenarlıkla.
+//  Return: yok.
+// ============================================================
 void drawMasterMenu(bool fullRedraw) {
     if (fullRedraw) {
         tft.fillScreen(TFT_BLACK);
@@ -957,6 +1182,10 @@ void drawMasterMenu(bool fullRedraw) {
     }
 }
 
+// ============================================================
+//  snakeReset — Yılan oyununu başlangıç durumuna getirir.
+//  Uzunluk=3, yön=sağa, skor=0, yem rastgele konumlanır. Return: yok.
+// ============================================================
 void snakeReset() {
     snakeLen = 3;
     snakeDirX = 1; snakeDirY = 0;
@@ -969,6 +1198,12 @@ void snakeReset() {
     snakeFoodY = (millis() % (SNAKE_H - 2)) + 1;
 }
 
+// ============================================================
+//  snakeDraw — Yılan oyununu TFT'ye çizer. CS=5 piksel/hücre.
+//  İlk çizimde ekran temizlenir (snakeDrawn bayrağı ile). Yem turuncu,
+//  gövde koyu yeşilden açık yeşile gradyan, baş en açık. Skor altta.
+//  Ölünce GAME OVER ekranı + tekrar/çıkış ipuçları. Return: yok.
+// ============================================================
 void snakeDraw() {
     const int CS = 5; 
     const int OX = 0, OY = 0; 
@@ -1006,6 +1241,12 @@ void snakeDraw() {
     }
 }
 
+// ============================================================
+//  snakeUpdate — Yılan oyununun bir adımını hesaplar (hareket, çarpışma, yeme).
+//  now: güncel zaman. Hız uzunluk arttıkça artar (min 80ms).
+//  Duvara/kendine çarpınca ölür. Yem yiyince uzunluk +1, skor +10, yem taşınır.
+//  Return: yok.
+// ============================================================
 void snakeUpdate(uint32_t now) {
     if (snakeDead) return;
     
@@ -1053,7 +1294,23 @@ void snakeUpdate(uint32_t now) {
 // ==========================================
 // ÇEKİRDEK 1: ANA OYUN MOTORU VE GRAFİKLER (SPI)
 // ==========================================
-void TaskEngine(void * pvParameters) {
+// ============================================================
+//  TaskEngine — Oyun mantığını hesaplayan FreeRTOS task (Core 0, IRAM_ATTR).
+//  IRAM_ATTR: fonksiyonu hızlı iç SRAM'e yerleştirir (flash'tan çalışmaz) -> performans.
+//  Sorumluluklar:
+//   - STATE_MENU: Doom iç menüsü (Yeni Oyun / Seviye Seç) çizimi ve navigasyon
+//   - STATE_PAUSE: duraklatma ekranı
+//   - STATE_PLAYING: ana oyun döngüsü:
+//       * Delta time (dt) hesabı
+//       * Joystick ile kamera dönüşü + WASD/ileri-geri hareket
+//       * Butonlar: A=ateş, B=kullan/kapı/yakın dövüş, C=silah değiştir, D=kalkan, JOY_SW=pause
+//       * Düşman AI (chase/patrol/ateş), mermi fiziği, varil patlaması
+//       * Raycasting render -> framebuffer'a yazar (duvarlar + sprite'lar + silah + HUD flash)
+//       * Triple-buffer takası (fb_render -> fb_ready)
+//  Bu task bir frame'i tamamladıktan sonra 1ms bekler (vTaskDelay) diğer task'lara yer açar.
+//  Parametre: pvParameters (kullanılmıyor). Return: yok (sonsuz döngü).
+// ============================================================
+void IRAM_ATTR TaskEngine(void * pvParameters) {
   bool joySw_prev = true;
   for(;;) {
       uint32_t current_ms = millis();
@@ -1062,12 +1319,12 @@ void TaskEngine(void * pvParameters) {
 
 
       // ==========================================
-      // DOOM İÇ MENÜSÜ (STATE_MENU)
+      // DOOM İÇ MENÜSÜ (STATE_MENU) — Joystick ile gez, A=seç, B=OS'a dön
       // ==========================================
       if(gameState == STATE_MENU) {
 
           // ── ORTAK DEĞİŞKENLER ─────────────────────────────
-          int  jy_menu  = analogRead(JOY_Y) - joyCenterY;
+          int  jy_menu  = joyRawY - joyCenterY;
           static uint32_t lastMenuMove = 0;
           uint32_t mnow = millis();
 
@@ -1116,7 +1373,7 @@ void TaskEngine(void * pvParameters) {
               {
                   bool sel = (menuSelection == 0);
                   tft.setTextSize(1);
-                  tft.setCursor(35, 105);
+                  tft.setCursor(47, 105);
                   if(sel) {
                       // Ok imleci — kırmızımsı turuncu, titrek efekt
                       uint8_t pulse = (uint8_t)(128 + 127 * sin(mnow * 0.008f));
@@ -1134,7 +1391,7 @@ void TaskEngine(void * pvParameters) {
               {
                   bool sel = (menuSelection == 1);
                   tft.setTextSize(1);
-                  tft.setCursor(35, 118);
+                  tft.setCursor(44, 118);
                   if(sel) {
                       uint8_t pulse = (uint8_t)(128 + 127 * sin(mnow * 0.008f));
                       tft.setTextColor(tft.color565(255, pulse/2, 0));
@@ -1211,12 +1468,7 @@ void TaskEngine(void * pvParameters) {
 
                   // Merkezi panel kaldirildi
 
-                  // Başlık
-                  tft.setTextSize(1);
-                  tft.setTextColor(RGB_FIX(180, 0, 0));
-                  tft.setCursor(28, 33);
-                  tft.print("- EPIZOT SEC -");
-                  tft.drawFastHLine(14, 43, 132, RGB_FIX(100, 0, 0));
+                  // Başlık (EPIZOT SEC Kaldırıldı)
 
                   menuDrawn = true;
               }
@@ -1294,21 +1546,33 @@ void TaskEngine(void * pvParameters) {
       }
       
       // ==========================================
-      // DOOM PAUSE MENÜSÜ (STATE_PAUSE)
+      // DOOM PAUSE MENÜSÜ (STATE_PAUSE) — A=devam, B=menüye dön
       // ==========================================
       if(gameState == STATE_PAUSE) {
           if(!menuDrawn) {
               vTaskDelay(pdMS_TO_TICKS(100)); // TaskDisplay'in durduğundan emin ol
               
-              // Framebuffer yerine doğrudan TFT'ye çiziyoruz
-              tft.fillRect(30, 40, 100, 50, tft.color565(15, 0, 0));
-              tft.drawRect(30, 40, 100, 50, tft.color565(200, 0, 0));
+              // Framebuffer yerine doğrudan TFT'ye çiziyoruz (Premium Doom Temalı)
+              tft.fillRoundRect(25, 30, 110, 65, 5, RGB_FIX(30, 0, 0));
+              tft.drawRoundRect(25, 30, 110, 65, 5, RGB_FIX(255, 50, 50));
+              tft.drawRoundRect(26, 31, 108, 63, 4, RGB_FIX(150, 0, 0));
+              
+              tft.setTextSize(2);
+              tft.setTextColor(RGB_FIX(255, 50, 50));
+              const char* pTitle = "PAUSE";
+              tft.setCursor((SW - strlen(pTitle)*12)/2, 38);
+              tft.print(pTitle);
+
               tft.setTextSize(1);
               tft.setTextColor(TFT_WHITE);
-              tft.setCursor(60, 48); tft.print("PAUSE");
-              tft.setTextColor(tft.color565(200, 200, 0));
-              tft.setCursor(42, 62); tft.print("[A] Devam Et");
-              tft.setCursor(42, 74); tft.print("[B] E-OS Menu");
+              const char* pTxtA = "[A] Devam Et";
+              tft.setCursor((SW - strlen(pTxtA)*6)/2, 62);
+              tft.print(pTxtA);
+              
+              tft.setTextColor(RGB_FIX(180, 180, 180));
+              const char* pTxtB = "[B] Menu";
+              tft.setCursor((SW - strlen(pTxtB)*6)/2, 76);
+              tft.print(pTxtB);
               
               menuDrawn = true;
           }
@@ -1330,8 +1594,10 @@ void TaskEngine(void * pvParameters) {
       }
 
       // ==========================================
-      // OYUN DURUMU (STATE_PLAYING)
+      // OYUN DURUMU (STATE_PLAYING) — Ana oyun döngüsü
       // ==========================================
+      // Delta time: frame'ler arası süre. Maksimum 0.1sn ile sınırlandırılır
+      // (pause'dan dönüşte dev zıplamayı önler). Hareketler dt'ye bağlıdır.
       uint32_t now = millis();
       float dt = (now - lastFrame) / 1000.0f; lastFrame = now; if(dt > 0.1) dt = 0.1;
 
@@ -1381,11 +1647,15 @@ void TaskEngine(void * pvParameters) {
         continue; 
       }
       
+      // --- KALKAN / PARRY SİSTEMİ (BTN_D) ---
+      // Kalkan basılı tutulunca hasar emilir (kontaktan sekme). Kalkan açıldıktan
+      // ilk 300ms = "parry" penceresi: mermiler düşmana geri sektirilir (type 13).
       bool currentShieldState = !digitalRead(BTN_D);
       if(currentShieldState && !lastShieldState && (now - shieldStartTime > 500)) shieldStartTime = now;
       lastShieldState = currentShieldState;
       bool isParrying = currentShieldState && (now - shieldStartTime < 300);
 
+      // --- DÜŞÜK CAN KALP ATIŞI SESİ --- (hp<=25 iken her 250ms'de ritmik bip)
       static int lastBeat = 0;
       if (hp > 0 && hp <= 25) {
           int currentBeat = (now % 1000) / 250;
@@ -1395,14 +1665,20 @@ void TaskEngine(void * pvParameters) {
           else if (currentBeat == 3 && lastBeat != 3) { lastBeat = 3; }
       }
 
-      int jx=analogRead(JOY_X)-joyCenterX, jy=analogRead(JOY_Y)-joyCenterY;
+      // --- JOYSTICK / WASD KONTROL MANTIĞI ---
+      // jx = X ekseni (yatay) = kamera dönüşü. jy = Y ekseni (dikey) = ileri/geri.
+      // Deadzone 300: küçük titremeleri ve kendiliğinden kaymayı engeller.
+      // Dönüş: dirX/dirY ve planeX/planeY vektörleri bir rotasyon matrisi ile güncellenir.
+      // Hareket: kalkanlıyken yavaş (1.5x), normalde hızlı (3.0x). Çarpışma kontrolü
+      // için margin (0.2) eklenir — duvara yapışmayı önler, sadece boş hücreye girilir.
+      int jx=joyRawX-joyCenterX, jy=joyRawY-joyCenterY;
       // Joystick deadzone artırıldı (Titremeyi ve kendi kendine yürümeyi kesmek için)
       if(abs(jx)<300) jx=0; if(abs(jy)<300) jy=0;
       if(jx) {
-        float rs=(jx/2000.0f)*2.5f*dt, odx=dirX;
-        dirX=dirX*cos(rs)-dirY*sin(rs);
-        dirY=odx*sin(rs)+dirY*cos(rs);
-        float opx=planeX; planeX=planeX*cos(rs)-planeY*sin(rs); planeY=opx*sin(rs)+planeY*cos(rs);
+        float rs=(jx/2000.0f)*2.5f*dt, s=rs, c=1.0f-rs*rs*0.5f, odx=dirX;
+        dirX=dirX*c-dirY*s;
+        dirY=odx*s+dirY*c;
+        float opx=planeX; planeX=planeX*c-planeY*s; planeY=opx*s+planeY*c;
       }
       
       if(jy) {
@@ -1416,6 +1692,12 @@ void TaskEngine(void * pvParameters) {
         if(MAP[(int)(py + moveY + marginY)][(int)px] == 0) py += moveY;
       }
 
+      // --- BTN_B: KULLAN / KAPI AÇ / YAKIN DÖVÜŞ ---
+      // 300ms cooldown ile. Ön tarafta (dirX/dirY doğrultusunda) 2 birim mesafe
+      // içindeki ilk nesneyle etkileşir:
+      //   6=kapı aç (sil), 7=kilitli kapı (anahtar gerek), 8=çıkış (sonraki seviye),
+      //   4=gizli duvar (5'e dönüp gizli sprite'ları ve 31'lik duvarları açar).
+      // Ön tarafta düşman varsa ve kalkan kapalıysa: yakın dövüş (25 hasar).
       if (!digitalRead(BTN_B) && now - sonKullanma > 300) {
         bool kapiAcildi = false;
         for(float d = 0.1; d <= 2.0; d += 0.2) {
@@ -1489,6 +1771,18 @@ void TaskEngine(void * pvParameters) {
         sonKullanma = now;
       }
 
+      // --- DÜŞMAN AI & MERMI FIZIGI (sprite dongusu) ---
+      // Her sprite icin oyuncuya mesafe + görüş hattı (LOS) hesaplanir.
+      // LOS: duvarlar arkasindaki dusmani gormeyi engeller (ray march ile).
+      // Dusman tipleri:
+      //   5=zombi: 0.5x hiz, uzaktan ates edebilir (fireball=type 12)
+      //   14=baron: 0.3x hiz, uzaktan ates, 30 hasar, 150 hp
+      //   17=pinky: 1.2x hiz + zigzag, ATES ETMEZ (sadece isirir), 25 hasar
+      //   12=dusman mermisi: oyuncuya dogru 4.0x, carpinca 15 hasar (kalkanla sekme)
+      //   13=sekme mermisi: dusmana geri donmus, 40 hasar verir
+      //   9/10/11/43: esya (yakin gelince toplanir)
+      // Kalkan + ileri (jy<0) + yakin = testere saldirisi (40 hasar).
+      // Parry penceresinde mermi geri seker (type 12->13, hiz 1.5x).
       for(int i=0; i<NUM_SPRITES; i++) {
         if(sprites[i].state >= 1) {
             float dx = px - sprites[i].x, dy = py - sprites[i].y, dist = sqrt(dx*dx + dy*dy);
@@ -1591,6 +1885,7 @@ void TaskEngine(void * pvParameters) {
         }
       }
 
+      // --- SİLAH DEĞİŞTİRME (BTN_C) --- Edge detection ile 0<->1 arasında geçiş
       static bool btnC_prev = true;
       bool btnC_curr = digitalRead(BTN_C);
       if (btnC_prev && !btnC_curr) {
@@ -1600,6 +1895,12 @@ void TaskEngine(void * pvParameters) {
       }
       btnC_prev = btnC_curr;
 
+      // --- ATEŞ MEKANİĞİ (BTN_A) ---
+      // Kalkan açıkken ates edilemez. Yakin dovus (B) animasyonu sirasinda bekle.
+      // weaponType 0 = TABANCA: 250ms cooldown, 1 mermi, 20 hasar, tek hedef, menzil 8.0
+      //   Açı ±0.2 rad, LOS gerekli. Varil vurunca patlar.
+      // weaponType 1 = POMPALI: 600ms cooldown, 3 mermi, 45 hasar, max 3 hedef, menzil 4.5
+      //   Açı ±0.5 rad (daha geniş saçma). Düşman ölünce zırh kazandırır.
       bool btnA_curr = digitalRead(BTN_A);
       if(!btnA_curr && !currentShieldState && (now - meleeTimer >= 300)) { 
           if (weaponType == 0 && ammo > 0 && now - fireT > 250) { 
@@ -1665,12 +1966,36 @@ void TaskEngine(void * pvParameters) {
 
       // ==========================================
       // RENDER DÖNGÜLERİ (Güvenli Çizim Alanı)
+      // Bu noktadan sonra gameMutex gerekmez; sadece fb_render buffer'ına yazılır.
       // ==========================================
+      // activeFB: bu frame için yazılacak framebuffer (triple-buffer'dan fb_render)
       uint16_t* activeFB = fb[fb_render];
-      int pitch = (now - lastDamageTime < 200 && !currentShieldState) ? random(-6, 7) : 0;
+      // LCG (lineer congruential) rastgele sayı — hasar alınca ekran sarsıntısı (pitch) için
+      static uint32_t lcg = 12345;
+      lcg = lcg * 1103515245 + 12345;
+      // pitch: hasar alınmışsa son 200ms'de dikey sarsıntı (-6..+6 piksel). Kalkanlıyken yok.
+      int pitch = (now - lastDamageTime < 200 && !currentShieldState) ? (int)(lcg % 13) - 6 : 0;
       
+      // ============================================================
+      //  RAYCASTING — DDA (Digital Differential Analyzer) ALGORİTMASI
+      //  Her piksel sütunu (x) için bir ışın (ray) gönderilir:
+      //   1. camX: sütunun kamera düzlemindeki yatay konumu (-1..+1)
+      //   2. rayX,rayY: ışın yönü = dirX + planeX*camX (ve Y karşılığı)
+      //   3. DDA: ışın grid hücrelerinden geçerek ilk dolu hücreyi bulur.
+      //      ddx/ddy = bir hücre geçmek için gereken ışın uzunluğu (X/Y ekseninde).
+      //      sdx/sdy = bir sonraki grid çizgisine olan kümülatif mesafe.
+      //      side: çarpan yüzeyin yönü (0=X duvarı, 1=Y duvarı -> daha koyu gölge).
+      //   4. perp: duvara dik mesafe (balık gözü bozulmasını önler).
+      //   5. lh: duvar yüksekliği (ekran yüksekliği / mesafe) -> uzak duvar küçük.
+      //   6. ds/de: duvarın ekran üst/alt sınırları (pitch ile sarsıntı eklenir).
+      //   7. Texture mapping: duvar yüzeyindeki isabet noktası (wx) -> texel x (tx);
+      //      dikey olarak tp adımıyla ty hesaplanır, tex[]'den renk okunur.
+      //      Y duvarları (side==1) yarı parlaklıkla gölgelenir (derinlik hissi).
+      //   Tavan RGB(30,30,60), zemin RGB(60,60,60). Boş ışın (harita dışı) = koyu mavi.
+      //  zBuffer[x]: sprite çiziminde derinlik testi için saklanır.
+      // ============================================================
       for(int x=0;x<SW;x++) {
-        float camX=2*x/(float)SW-1, rayX=dirX+planeX*camX, rayY=dirY+planeY*camX;
+        float camX=camXTable[x], rayX=dirX+planeX*camX, rayY=dirY+planeY*camX;
         int mx=(int)px, my=(int)py;
         float ddx=fabs(1/rayX), ddy=fabs(1/rayY), sdx, sdy; int sx, sy, hit=0, side, ht=1;
         if(rayX<0){sx=-1; sdx=(px-mx)*ddx;} else{sx=1; sdx=(mx+1-px)*ddx;}
@@ -1696,14 +2021,33 @@ void TaskEngine(void * pvParameters) {
         for(int y=de;y<SH;y++) activeFB[y*SW+x]=RGB_FIX(60,60,60);
       }
 
+      // ============================================================
+      //  SPRITE RENDERING (düşmanlar, eşyalar, mermiler, silah)
+      //  1. Sıralama: aktif sprite'lar oyuncuya olan mesafeye göre UZAKTAN YAKINA
+      //     insertion sort ile dizilir (yakın olanlar sonra çizilir, üstte kalır).
+      //  2. Kamera dönüşümü: sprite'ın ekran koordinatına (tx, ty) çevrilmesi.
+      //     ty = derinlik (önünde mi?), ty>0 ise kamera arkasında değil = çizilebilir.
+      //  3. Z-test: her sütunda ty < zBuffer[x] ise sprite duvardan daha yakın = çiz.
+      //     Chroma-key: renk 0x0000 (siyah) = saydam, atlanır.
+      //  4. HIT efekti: hasar almış düşman pikselleri parlaklaştırılır (r+12, g+24, b+12).
+      // ============================================================
       int order[NUM_SPRITES]; float dists[NUM_SPRITES];
-      for(int i=0; i<NUM_SPRITES; i++) { 
-          order[i]=i; 
-          float dx_s = px-sprites[i].x; float dy_s = py-sprites[i].y;
-          dists[i] = dx_s*dx_s + dy_s*dy_s; 
-      }
-      for(int i=0; i<NUM_SPRITES-1; i++) for(int j=0; j<NUM_SPRITES-i-1; j++) if(dists[order[j]]<dists[order[j+1]]) { int t=order[j]; order[j]=order[j+1]; order[j+1]=t; }
+      int aliveCount = 0;
       for(int i=0; i<NUM_SPRITES; i++) {
+          if(sprites[i].state<=0 && sprites[i].type!=15) continue;
+          if(sprites[i].type==15 && sprites[i].state<=0 && sprites[i].animState==ANIM_DEAD) continue;
+          float dx_s = px-sprites[i].x; float dy_s = py-sprites[i].y;
+          dists[aliveCount] = dx_s*dx_s + dy_s*dy_s;
+          order[aliveCount] = i;
+          // Insertion sort (far to near)
+          int j = aliveCount;
+          while(j > 0 && dists[order[j-1]] < dists[order[j]]) {
+              int t = order[j]; order[j] = order[j-1]; order[j-1] = t;
+              j--;
+          }
+          aliveCount++;
+      }
+      for(int i=0; i<aliveCount; i++) {
         int idx=order[i]; if(sprites[idx].state<=0 && sprites[idx].type!=15) continue; 
         if(sprites[idx].type==15 && sprites[idx].state<=0 && sprites[idx].animState == ANIM_DEAD) continue;
         float sx=sprites[idx].x-px, sy=sprites[idx].y-py, det=1.0/(planeX*dirY-dirX*planeY), tx=det*(dirY*sx-dirX*sy), ty=det*(-planeY*sx+planeX*sy);
@@ -1735,6 +2079,18 @@ void TaskEngine(void * pvParameters) {
         }
       }
 
+      // ============================================================
+      //  SİLAH/GÖRÜNÜM RENDERING (ekran alt-ortasında 64x64)
+      //  gW/gH=64, gX=ortalanmış, gY=alt+aşağı (pitch ile sarsıntı takip eder).
+      //  Hareket halinde (jx||jy) silah yukarı-aşağı sallanır (sin dalgası).
+      //  weaponType 0 = silah 15 piksel daha aşağıda (farklı konum).
+      //  wTex seçimi (duruma göre texture ID):
+      //   - meleeTimer<300: y_vur (21) = yakın dövüş animasyonu
+      //   - kalkan açık + sekme anı: k_sektir (20); k_vur<200ms (19); else k_dur (18)
+      //   - tabanca: atış sonrası 100ms = t_ates (15), else t_bekle (14)
+      //   - pompalı: çok kademeli geri tepme (17->47->48->47->16)
+      //  Chroma-key: siyah pikseller atlanır (silah arka planı saydam).
+      // ============================================================
       int gW=64, gH=64, gX=(SW-gW)/2, gY=SH-gH+5+pitch;
       if(jx||jy) gY+=sin(now/150.0)*4; 
       if (weaponType == 0) gY += 15; 
@@ -1775,6 +2131,9 @@ void TaskEngine(void * pvParameters) {
           }
       }
       
+      // --- HASAR / DÜŞÜK CAN EKRAN EFEKTİ ---
+      // Hasar alınmışsa (son 200ms) VEYA hp<=25 iken (her 1sn'de 150ms) ekran
+      // kenarlarına kırmızı vinyet (dış=koyu, iç=açık) çizilir — tehlike uyarısı.
       bool lowHpFlash = (hp > 0 && hp <= 25) && ((now % 1000) < 150);
       if((now-lastDamageTime<200 && !currentShieldState) || lowHpFlash) {
         uint16_t redOut = RGB_FIX(255, 0, 0); uint16_t redIn = RGB_FIX(150, 0, 0);
@@ -1782,6 +2141,15 @@ void TaskEngine(void * pvParameters) {
         for(int x=0; x<SW; x++) { activeFB[x]=activeFB[(SH-1)*SW+x]=redOut; activeFB[SW+x]=activeFB[(SH-2)*SW+x]=redIn; }
       }
 
+      // ============================================================
+      //  TRIPLE-BUFFER TAKASI (frame tamamlanınca)
+      //  fb_swap_mutex altında atomik olarak:
+      //   - fb_render (yazılan) -> fb_ready (hazır) yapılır.
+      //   - Eski fb_ready varsa, onu yeni fb_render yaparız (geri dönüşümlü kullanım).
+      //   - Yoksa, fb_display olmayan üçüncü buffer'ı fb_render seçeriz.
+      //  Böylece Engine hep boş bir buffer bulur, Display ise en son hazırlananı basar.
+      //  5ms timeout:极端 durumlarda kilitlenmeyi önler.
+      // ============================================================
       if (xSemaphoreTake(fb_swap_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
           int8_t old_ready = fb_ready;
           fb_ready = fb_render;
@@ -1799,7 +2167,22 @@ void TaskEngine(void * pvParameters) {
 }
 
 
-void TaskDisplay(void * pvParameters) {
+// ============================================================
+//  TaskDisplay — Hazır framebuffer'ı TFT'ye basan FreeRTOS task (Core 1).
+//  IRAM_ATTR: hızlı iç SRAM'de çalışır. STATE_PLAYING dışında uyur (100ms).
+//  Mantık:
+//   1. fb_ready >= 0 ise (yeni frame var) mutex altında fb_display=fb_ready, fb_ready=-1.
+//   2. SCREENSHOT: C+D buton kombinasyonu (rising edge) -> takeScreenshotFB çağrısı.
+//      (checkScreenshotFB/takeScreenshotFB çağrılarına dokunma — dev_tools.h'den gelir.)
+//   3. tft.pushImage ile framebuffer TFT'ye aktarılır.
+//   4. Dinamik HUD güncellemesi: yalnızca değer değişince çizilir (cache sistemi):
+//      - AMMO (INF modu = kalkan/yakın dövüş sırasında sınırsız gösterimi)
+//      - HEALTH (hp<=25 ise kırmızı, else beyaz)
+//      - ARMOR, anahtar ikonu, FPS (her 1 sn'de).
+//  1ms vTaskDelay ile diğer task'lara yer verilir.
+//  Parametre: pvParameters (kullanılmıyor). Return: yok (sonsuz döngü).
+// ============================================================
+void IRAM_ATTR TaskDisplay(void * pvParameters) {
     for(;;) {
         if (gameState != STATE_PLAYING) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -1816,6 +2199,15 @@ void TaskDisplay(void * pvParameters) {
                 xSemaphoreGive(fb_swap_mutex);
             }
             if (toDisplay >= 0) {
+                // Screenshot: C+D kombinasyonu (Menüde B ile çakışmayı önlemek için)
+                {
+                    static bool prevCD = false;
+                    bool cd = (!digitalRead(BTN_C) && !digitalRead(BTN_D));
+                    if (cd && !prevCD) {
+                        takeScreenshotFB(fb[toDisplay], SW, SH);
+                    }
+                    prevCD = cd;
+                }
                 tft.pushImage(0, 0, SW, SH, fb[toDisplay]);
                 
                 uint32_t now = millis();
@@ -1851,7 +2243,7 @@ void TaskDisplay(void * pvParameters) {
                     fps = frameCount; frameCount = 0; fpsTimer = now;
                     if (fps != lastFps) {
                         tft.setTextColor(RGB_FIX(100, 100, 100), RGB_FIX(40, 40, 40));
-                        tft.setCursor(144, hy+3); tft.printf("%2d ", fps);
+                        tft.setCursor(142, hy+3); tft.printf("%03d", fps);
                         lastFps = fps;
                     }
                 }
@@ -1861,10 +2253,43 @@ void TaskDisplay(void * pvParameters) {
     }
 }
 
+// ============================================================
+//  TaskJoy — Joystick analog değerlerini arka planda okuyan FreeRTOS task (Core 1).
+//  TaskEngine'in analogRead ile bloke olmasını önlemek için ayrı task'ta 10ms'de
+//  bir X/Y eksenini örnekler ve joyRawX/joyRawY'ye (volatile) yazar.
+//  Kalibrasyon merkezi setup()'ta belirlenir; bu task sadece ham değer verir.
+//  Parametre: pvParameters (kullanılmıyor). Return: yok (sonsuz döngü).
+// ============================================================
+void TaskJoy(void * pvParameters) {
+    for(;;) {
+        joyRawX = analogRead(JOY_X);
+        joyRawY = analogRead(JOY_Y);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+// ============================================================
+//  setup — ESP32-S3 başlangıç konfigürasyonu. Sırasıyla:
+//   1. Buzzer susturma + Seri port
+//   2. SPI çakışmasını önleme (CS pinlerini HIGH)
+//   3. SPI veriyolu başlatma
+//   4. SD kart başlatma (40MHz) + dev_tools
+//   5. OTA boot partition güvenliği
+//   6. Triple-buffer PSRAM tahsisi
+//   7. Buton pinleri
+//   8. PSRAM: TITLEPIC + texture buffer'ları
+//   9. Texture'ların SD'den PSRAM'a yüklenmesi (makeTex + loadBMP)
+//  10. SD'yi kapat + TFT başlat (SPI hattını serbest bırak)
+//  11. Joystick kalibrasyonu
+//  12. NVS'ten ses ayarı
+//  13. FreeRTOS task'larını çekirdeklere sabitleme (dual-core)
+//  ESP32-S3: çift çekirdek (Core 0=motor, Core 1=ekran/radar/joystick), PSRAM
+//  desteği ile büyük texture/framebuffer'lar internal RAM'i şişirmeden tutulur.
+// ============================================================
 void setup() {
   // Buzzer Boot Beep Engelleme
-  pinMode(5, OUTPUT);
-  digitalWrite(5, LOW);
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW);
 
   Serial.begin(115200); 
 
@@ -1877,13 +2302,19 @@ void setup() {
 
   // 3. TFT'Yİ BEKLET! ÖNCE SADECE SD KARTI BAŞLAT!
   // Maksimum sınırı zorluyoruz: 40 MHz! (Flashlama ve Yükleme hızını uçuracak)
-  sdReady = SD.begin(SD_CS, SPI, 40000000); 
+   sdReady = SD.begin(SD_CS, SPI, 40000000);
+   initDevTools(tft);
 
   // GÜVENLİK: Elektrik kesilirse her zaman OS'tan başla
   const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
   if (os_part) { esp_ota_set_boot_partition(os_part); }
   
-  // TRIPLE BUFFERING INIT
+  // ============================================================
+  //  TRIPLE BUFFERING INIT — 3 framebuffer PSRAM'den ayrılır.
+  //  heap_caps_malloc + MALLOC_CAP_SPIRAM: veriyi ESP32-S3'ün external PSRAM'ına koyar.
+  //  Her buffer = 160*104*2 = 33KB. Internal RAM yetmezdi; PSRAM sayesinde mümkün.
+  //  PSRAM yoksa (fall-back) malloc ile internal RAM denenir ama genelde çöker.
+  // ============================================================
   for (int i = 0; i < 3; i++) {
       fb[i] = (uint16_t*)heap_caps_malloc(SW * SH * 2, MALLOC_CAP_SPIRAM);
       if (!fb[i]) {
@@ -1902,7 +2333,9 @@ void setup() {
   pinMode(BUZZER, OUTPUT);
 
   // ============================================================
-  // PSRAM ALOKASYONLARI
+  //  PSRAM ALOKASYONLARI — Texture atlas ve TITLEPIC buffer'ları
+  //  MALLOC_CAP_SPIRAM: hepsi external PSRAM'de (internal RAM'i serbest bırakır).
+  //  Başarısız olursa internal RAM denenir; o da olmazsa kritik hata ekranı + dur.
   // ============================================================
 
   // TITLEPIC buffer'ı PSRAM'dan ayır (160x128x2 = 40KB)
@@ -1912,6 +2345,7 @@ void setup() {
       titlePicBuf = (uint16_t*)malloc(160 * 128 * 2);
   }
 
+  // MAX_TEX adet texture slot'u ayır (her biri 64x64x2 = 8KB). 0. indeks kullanılmaz.
   for (int i = 1; i < MAX_TEX; i++) {
     tex[i] = (uint16_t*)heap_caps_malloc(TEX_W * TEX_H * 2, MALLOC_CAP_SPIRAM);
     if (!tex[i]) tex[i] = (uint16_t*)malloc(TEX_W * TEX_H * 2);
@@ -1926,9 +2360,21 @@ void setup() {
         while(1) { vTaskDelay(pdMS_TO_TICKS(100)); } // Motoru güvenlice durdur
     }
   }
+  // Prosedürel texture'ları üret (SD gerektirmeyen: yeşil zemin, ateş topu, sekme mermisi)
   for (int i = 8; i <= 13; i++) makeTex(i); 
   
-  // SD Kart varsa doğrudan SD üzerinden PSRAM'a okuyacağız!
+  // ============================================================
+  //  TEXTURE'LARIN SD'DEN PSRAM'A YÜKLENMESİ
+  //  SD kart varsa tüm BMP'ler tek tek tex[] slotlarına yüklenir.
+  //  fileBuf (80KB PSRAM): bir dosyayı tek seferde okuyup hızlı işleyen tampon.
+  //  Yükleme sırasında OLED'de "Grafikler Yukleniyor..." mesajı gösterilir.
+  //  Texture grubu:
+  //   1-3=duvarlar, 4-5=anahtar düğme (off/on), 6=kapı, 7=kilitli, 31=gizli duvar
+  //   9=mermi, 10=can, 11=anahtar, 43=armor
+  //   14-15=tabanca, 16-17,47-48=pompalı, 18-20=kalkan, 21=yakın dövüş
+  //   22-26=zombi, 27-30,32-33,44=pinky, 34-39=baron, 40-42=varil
+  //  İş bitince fileBuf serbest bırakılır ve SD kapatılır (SPI hattı TFT'ye devredilir).
+  // ============================================================
   if (sdReady) {
       oled.begin();
       oled.clearBuffer();
@@ -1993,11 +2439,18 @@ void setup() {
       delay(2000);
   }
   
+  // === 4. TFT BAŞLATMA ===
+  // SD kapatıldı, SPI hattı artık TFT'ye ayrıldı. SD_CS HIGH + SPI.end + TFT init.
+  // setRotation(1)=yatay. setSwapBytes(true)=16-bit pushImage için byte sıralama.
+  // camXTable: her sütunun kamera düzlemi koordinatı önceden hesaplanır (raycasting'de hız).
+  // setScreenshotMode(SCR_BGR_NOSWAP): screenshot'ta byte-swap kapalı (BGR düzeni).
   // === 4. ARTIK SD KART OLMADIĞINA GÖRE TFT'Yİ GÜVENLE BAŞLATABİLİRİZ ===
   digitalWrite(SD_CS, HIGH); SPI.end(); delay(50); 
   tft.init();
   tft.setRotation(1);
   tft.setSwapBytes(true);
+  for(int i=0;i<SW;i++) camXTable[i]=2.0f*i/SW-1.0f;
+  setScreenshotMode(SCR_BGR_NOSWAP);
   tft.fillScreen(TFT_BLACK);
   
   // Butonlar ve buzzer zaten yukarıda başlatıldı, sadece joystick kaldı
@@ -2017,7 +2470,10 @@ void setup() {
   // --- V2.1: NVS'ten ses ayarını oku ---
   { Preferences prefs; prefs.begin("os", true); soundEnabled = prefs.getBool("sound_en", true); prefs.end(); }
   
-  // --- FREERTOS ÇİFT ÇEKİRDEK ATAMALARI ---
+  // --- FREERTOS ÇİFT ÇEKİRDEK ATAMALARI (ESP32-S3 dual-core) ---
+  // Core 0: Oyun Motoru + Render (yüksek stack=30KB, öncelik 2) — ağır hesaplama
+  // Core 1: Display (TFT basım), Radar (OLED, düşük öncelik 0), Joy (analog okuma)
+  // Bu dağılım SPI çakışmasını önler: Engine buffer'a yazar, Display TFT'ye basar.
   
   // Core 0: Oyun Motoru ve Render
   xTaskCreatePinnedToCore(TaskEngine, "TaskEngine", 30000, NULL, 2, NULL, 0);
@@ -2026,11 +2482,19 @@ void setup() {
   xTaskCreatePinnedToCore(TaskDisplay, "TaskDisplay", 10000, NULL, 2, NULL, 1);
   
   // Core 1: Radar (Dusuk Oncelik)
-  xTaskCreatePinnedToCore(TaskRadar, "TaskRadar", 10000, NULL, 0, NULL, 1);
+  xTaskCreatePinnedToCore(TaskRadar, "TaskRadar", 20000, NULL, 0, NULL, 1);
+  
+  // Core 1: Joystick polling (async analogRead)
+  xTaskCreatePinnedToCore(TaskJoy, "TaskJoy", 2048, NULL, 1, NULL, 1);
   
   lastFrame = millis(); fpsTimer = millis();
 }
 
+// ============================================================
+//  loop — FreeRTOS kullanıldığı için Arduino loop()'a ihtiyaç yok.
+//  setup() sonunda vTaskDelete(NULL) ile bu task kendini siler; tüm iş
+//  FreeRTOS task'larında (TaskEngine/Display/Radar/Joy) yürür.
+// ============================================================
 void loop() {
   // FreeRTOS kullanırken loop()'a ihtiyaç kalmaz, görevi tamamen siliyoruz
   vTaskDelete(NULL); 
