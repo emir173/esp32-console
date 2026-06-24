@@ -42,32 +42,50 @@ Bu proje, ESP32-S3 mikrodenetleyicisi kullanılarak sıfırdan geliştirilmiş b
 ## 🕹️ 11 Adet Özel Oyun
 Tüm oyunlar cihazın çözünürlüğüne ve donanım limitlerine göre optimize edilmiştir.
 
-<div align="center">
-  <img src="docs/screenshots/Doom/SCR_042.bmp" width="48%" title="DOOM" style="border-radius: 5px;">
-  <img src="docs/screenshots/Pacman/SCR_005.bmp" width="48%" title="Pac-Man" style="border-radius: 5px;">
-  <br>
-  <img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="48%" title="Space Invaders" style="border-radius: 5px;">
-  <img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="48%" title="Arkanoid" style="border-radius: 5px;">
-</div>
+<table>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Doom/SCR_042.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>DOOM (3D Raycasting):</b> 3D ortamlar ve düşman yapay zekası (FreeRTOS triple-buffer + PSRAM dokuları).</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Wire%203D/SCR_001.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Wire3D:</b> Wireframe grafikli uzay savaşı.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/SpaceInvaders/SCR_024.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Space Invaders:</b> Klasik uzaylı vurma mekanikleri ve OLED entegrasyonu.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Galacticstrike/SCR_034.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Galactic Strike:</b> Uzay gemisi temalı savaş oyunu.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Mode%207/SCR_031.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Mode7:</b> SNES tarzı pseudo-3D yarış motoru.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Platformer/SCR_026.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Platformer:</b> Yan kaydırmalı (side-scrolling) platform oyunu.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Arkanoid/SCR_012.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Arkanoid:</b> Joystick kontrollü tuğla kırma oyunu.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Pacman/SCR_005.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Pac-Man:</b> Özel yapay zekaya sahip hayaletler ve klasik labirent.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Flappy/SCR_001.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Flappy Bird:</b> Zamanlama odaklı beceri oyunu.</td>
+  </tr>
+  <tr>
+    <td width="160" align="center"><img src="docs/screenshots/Snake/SCR_004.bmp" width="140" style="border-radius: 6px;"></td>
+    <td valign="middle"><b>Snake:</b> Klasik yılan oyunu.</td>
+  </tr>
+</table>
 
-<details>
-<summary><b>📸 Tüm Oyun Listesini Görmek İçin Tıklayın</b></summary>
-<br/>
-
-1. **DOOM (3D Raycasting):** 3D ortamlar ve düşman yapay zekası (FreeRTOS triple-buffer + PSRAM dokuları).
-2. **Wire3D:** Wireframe grafikli uzay savaşı.
-3. **Space Invaders:** Klasik uzaylı vurma mekanikleri ve OLED entegrasyonu.
-4. **Galactic Strike:** Uzay gemisi temalı savaş oyunu.
-5. **Mode7:** SNES tarzı pseudo-3D yarış motoru.
-6. **Platformer:** Yan kaydırmalı (side-scrolling) platform oyunu.
-7. **Arkanoid:** Joystick kontrollü tuğla kırma oyunu.
-8. **Pac-Man:** Özel yapay zekaya sahip hayaletler ve klasik labirent.
-9. **Flappy Bird:** Zamanlama odaklı beceri oyunu.
-10. **Snake:** Klasik yılan oyunu.
-11. **Launcher (E-OS):** Konsolun ana işletim sistemi ve menü arayüzü.
-
-*(Tüm oyunların tam boyutlu ekran görüntüleri detaylı inceleme için `docs/screenshots/` klasörü altında listelenmiştir).*
-</details>
+*Not: Sistem ayrıca konsolun tamamını yöneten dönen menülü animasyonlu **E-OS Launcher** işletim sistemini içermektedir.*
 
 ---
 
