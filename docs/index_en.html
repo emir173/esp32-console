@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>E-OS — El Konsolu</title>
+<title>E-OS — Handheld Console</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='15' y='25' width='70' height='50' rx='10' fill='%2312161B' stroke='%233BD16F' stroke-width='6'/><rect x='28' y='35' width='20' height='15' fill='%233BD16F' rx='2'/><circle cx='68' cy='40' r='5' fill='%23E8A33D'/><circle cx='58' cy='55' r='5' fill='%233BD16F'/></svg>">
 <meta name="theme-color" content="#0B0E11">
-<meta name="description" content="ESP32-S3 üzerinde çift ekranlı bir el konsolu — 10 oyun.">
+<meta name="description" content="A dual-screen handheld console on ESP32-S3 — 10 games.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -830,12 +830,12 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
   <div class="nav-inner">
     <div class="nav-logo"><span class="dot">●</span> E-OS</div>
     <div class="nav-links">
-      <a href="#mimari">Mimari</a>
-      <a href="#oyunlar">Oyunlar</a>
-      <a href="#yol-haritasi">Yol Haritası</a>
+      <a href="#mimari">Architecture</a>
+      <a href="#oyunlar">Games</a>
+      <a href="#yol-haritasi">Roadmap</a>
     </div>
     <div style="display:flex; gap:12px; align-items:center;">
-      <a href="index_en.html" style="font-family:var(--mono); font-size:12px; color:var(--paper-dim); text-decoration:none; border:1px solid var(--line); padding:4px 8px; border-radius:3px;">🇬🇧 EN</a>
+      <a href="index.html" style="font-family:var(--mono); font-size:12px; color:var(--paper-dim); text-decoration:none; border:1px solid var(--line); padding:4px 8px; border-radius:3px;">🇹🇷 TR</a>
       <a class="nav-cta" href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">GitHub →</a>
     </div>
   </div>
@@ -846,26 +846,26 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
   <!-- ============ HERO ============ -->
   <section class="hero reveal">
     <div>
-      <h1 class="hero-title">ESP32 <span class="accent">el konsolu</span></h1>
+      <h1 class="hero-title">ESP32 <span class="accent">handheld console</span></h1>
       <p class="hero-desc">
-        Tek kart, iki ekran. Bir çekirdek arka planda oyun matematiğini ve fizikleri hesaplarken, diğeri sadece grafikleri çizer. 10 farklı oyun, sıfır takılma.
+        One board, two screens. One core computes game math and physics in the background, while the other exclusively renders graphics. 10 custom games, zero stutter.
       </p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="#mimari">Mimariyi İncele</a>
-        <a class="btn btn-ghost" href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">Kaynak Kod</a>
+        <a class="btn btn-primary" href="#mimari">View Architecture</a>
+        <a class="btn btn-ghost" href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">Source Code</a>
       </div>
     </div>
     <div class="hero-frame">
-      <img src="images/hero.jpg" alt="E-OS konsol ön görünüm">
+      <img src="images/hero.jpg" alt="E-OS console front view">
       
     </div>
   </section>
 
   <div class="spec-strip">
-    <div class="spec-cell"><div class="spec-label">İşlemci</div><div class="spec-val">Dual-Core 240MHz</div></div>
-    <div class="spec-cell"><div class="spec-label">Bellek</div><div class="spec-val">16MB Flash / 8MB PSRAM</div></div>
-    <div class="spec-cell"><div class="spec-label">Ekranlar</div><div class="spec-val">160×128 TFT + 128×64 OLED</div></div>
-    <div class="spec-cell"><div class="spec-label">Dil</div><div class="spec-val">C/C++ · Arduino Fw</div></div>
+    <div class="spec-cell"><div class="spec-label">Processor</div><div class="spec-val">Dual-Core 240MHz</div></div>
+    <div class="spec-cell"><div class="spec-label">Memory</div><div class="spec-val">16MB Flash / 8MB PSRAM</div></div>
+    <div class="spec-cell"><div class="spec-label">Displays</div><div class="spec-val">160×128 TFT + 128×64 OLED</div></div>
+    <div class="spec-cell"><div class="spec-label">Language</div><div class="spec-val">C/C++ · Arduino Fw</div></div>
   </div>
 
 </div>
@@ -873,8 +873,8 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 <!-- ============ SCHEMATIC (SIGNATURE) ============ -->
 <section class="schematic-section" id="pinout">
   <div class="wrap">
-    <div class="eyebrow">DEVRE ŞEMASI</div>
-    <h2 class="section-title">Pin bağlantıları.</h2>
+    <div class="eyebrow">CIRCUIT SCHEMATIC</div>
+    <h2 class="section-title">Pinout connections.</h2>
 
     <div class="schematic-board">
       <div class="schematic-svg-wrap">
@@ -893,10 +893,10 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
       </div>
 
       <div class="pin-readout">
-        <div class="pin-readout-label">// seçili hat</div>
+        <div class="pin-readout-label">// selected line</div>
         <div class="pin-readout-val" id="pinReadout">
-          Üstteki şemada bir düğüme dokun veya gezin.
-          <span class="pin-detail">Her düğüm gerçek GPIO atamasını ve paylaşılan hat varsa hangi modüllerle paylaşıldığını gösterir.</span>
+          Hover or tap on a node in the schematic above.
+          <span class="pin-detail">Each node shows the actual GPIO mapping and shared modules if applicable.</span>
         </div>
       </div>
     </div>
@@ -907,23 +907,23 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 
   <!-- ============ ARCHITECTURE ============ -->
   <section id="mimari">
-    <div class="eyebrow">ÇİFT ÇEKİRDEK MİMARİSİ</div>
-    <h2 class="section-title">Core 0 hesaplar. Core 1 çizer.<br>Hiçbiri birbirini bekletmez.</h2>
-    <p class="section-sub">Tüm yük iki çekirdeğe dengeli şekilde paylaştırıldı. Oyunun zorlu matematiğini ve fiziklerini arka planda Core 0 hesaplarken, Core 1 sadece ekrana kusursuz ve akıcı görüntüler çizmeye odaklanır.</p>
+    <div class="eyebrow">DUAL-CORE ARCHITECTURE</div>
+    <h2 class="section-title">Core 0 computes. Core 1 renders.<br>Neither waits for the other.</h2>
+    <p class="section-sub">The workload is perfectly balanced across two cores. While Core 0 handles the heavy game logic and physics in the background, Core 1 focuses entirely on drawing smooth graphics to the screen.</p>
 
     <div class="arch-grid">
       <div class="arch-cell reveal stagger-1">
-        <div class="arch-core-label">CORE 0 — HESAPLAMA</div>
+        <div class="arch-core-label">CORE 0 — COMPUTE</div>
         <div class="arch-task"><span>TaskEngine</span><span class="pri">priority 2</span></div>
-        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ raycasting · fizik · AI</span><span class="pri">~30KB stack</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ raycasting · physics · AI</span><span class="pri">~30KB stack</span></div>
         <div class="arch-task"><span>TaskRadar</span><span class="pri">priority 1</span></div>
-        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ OLED çizimi, düşük öncelik</span><span class="pri"></span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ OLED rendering, low priority</span><span class="pri"></span></div>
       </div>
       <div class="arch-cell reveal stagger-2">
         <div class="arch-core-label">CORE 1 — RENDER</div>
         <div class="arch-task"><span>TaskDisplay</span><span class="pri">priority 3</span></div>
-        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ pushImage · HUD delta-draw</span><span class="pri">tek başına</span></div>
-        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ triple buffer swap, mutex korumalı</span><span class="pri"></span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ pushImage · HUD delta-draw</span><span class="pri">standalone</span></div>
+        <div class="arch-task"><span style="color:var(--paper-dim); font-size:12.5px;">↳ triple buffer swap, mutex protected</span><span class="pri"></span></div>
       </div>
     </div>
 
@@ -935,12 +935,12 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
           <div class="code-dot" style="background:#3BD16F"></div>
           <span>doom.ino — triple buffer swap</span>
         </div>
-        <pre><span class="cm">// fb_render: TaskEngine'in yazdığı buffer
-// fb_display: TaskDisplay'in okuduğu buffer
-// fb_ready: el değiştirmeye hazır olan buffer</span>
+        <pre><span class="cm">// fb_render: buffer written by TaskEngine
+// fb_display: buffer read by TaskDisplay
+// fb_ready: buffer ready to be swapped</span>
 <span class="kw">if</span> (<span class="fn">xSemaphoreTake</span>(fb_swap_mutex, <span class="fn">pdMS_TO_TICKS</span>(<span class="nm">2</span>)) == pdTRUE) {
   fb_ready  = fb_render;
-  fb_render = <span class="cm">/* üçüncü boş buffer'ı seç */</span>;
+  fb_render = <span class="cm">/* select the 3rd empty buffer */</span>;
   <span class="fn">xSemaphoreGive</span>(fb_swap_mutex);
 }</pre>
       </div>
@@ -951,8 +951,8 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 
   <!-- ============ GAMES ============ -->
   <section id="oyunlar">
-    <div class="eyebrow">OYUN KÜTÜPHANESİ</div>
-    <h2 class="section-title">10 oyun</h2>
+    <div class="eyebrow">GAME LIBRARY</div>
+    <h2 class="section-title">10 games</h2>
 
     <div class="game-list">
 
@@ -960,8 +960,8 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">01</div>
         <div class="game-content">
           <div class="game-name">DOOM</div>
-          <div class="game-desc">3D labirentlerde düşmanlara karşı hayatta kal.</div>
-          <span class="game-tag tag-new">FPS</span><span class="game-tag tag-core">3D RAYCAST</span><span class="game-tag tag-core">AKSİYON</span>
+          <div class="game-desc">Survive against enemies in 3D mazes.</div>
+          <span class="game-tag tag-new">FPS</span><span class="game-tag tag-core">3D RAYCAST</span><span class="game-tag tag-core">ACTION</span>
           <div class="game-gallery">
             <img src="screenshots/Doom/123.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
             <img src="screenshots/Doom/22.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -979,7 +979,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">02</div>
         <div class="game-content">
           <div class="game-name">MODE 7 RACING</div>
-          <div class="game-desc">Klasik yarış mekanikleri. Checkpointleri toplayarak rakiplerini geride bırak.</div>
+          <div class="game-desc">Classic racing mechanics. Collect checkpoints and leave rivals behind.</div>
           <span class="game-tag tag-core">MODE-7</span>
           <div class="game-gallery">
             <img src="screenshots/Mode 7/SCR_031.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -994,7 +994,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">03</div>
         <div class="game-content">
           <div class="game-name">WIRE-FRAME 3D</div>
-          <div class="game-desc">Üç boyutlu uzay savaşları ve tehlikeli tünel uçuşları.</div>
+          <div class="game-desc">3D space battles and dangerous tunnel flights.</div>
           <span class="game-tag tag-core">POLYGON 3D</span>
           <div class="game-gallery">
             <img src="screenshots/Wire 3D/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1009,7 +1009,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">04</div>
         <div class="game-content">
           <div class="game-name">GALACTIC STRIKE</div>
-          <div class="game-desc">Düşman filolarına karşı hayatta kal, güçlendirmeleri topla ve bölüm sonu canavarlarını yen.</div>
+          <div class="game-desc">Survive enemy fleets, collect power-ups and defeat bosses.</div>
           <span class="game-tag tag-core">SHOOT-EM-UP</span>
           <div class="game-gallery">
             <img src="screenshots/Galacticstrike/SCR_034.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1025,7 +1025,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">05</div>
         <div class="game-content">
           <div class="game-name">PLATFORMER</div>
-          <div class="game-desc">Engelleri aş, tuzaklardan kaç ve bölümleri geç.</div>
+          <div class="game-desc">Overcome obstacles, dodge traps, and beat the levels.</div>
           <span class="game-tag tag-core">PLATFORM</span>
           <div class="game-gallery">
             <img src="screenshots/Platformer/SCR_026.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1042,7 +1042,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">06</div>
         <div class="game-content">
           <div class="game-name">SPACE INVADERS</div>
-          <div class="game-desc">Dalga dalga gelen uzaylılara karşı hayatta kal.</div>
+          <div class="game-desc">Survive waves of incoming aliens.</div>
           <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
           <div class="game-gallery">
             <img src="screenshots/SpaceInvaders/SCR_023.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1057,7 +1057,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">07</div>
         <div class="game-content">
           <div class="game-name">ARKANOID</div>
-          <div class="game-desc">Giderek hızlanan topla tüm tuğlaları kır.</div>
+          <div class="game-desc">Break all bricks with an accelerating ball.</div>
           <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
           <div class="game-gallery">
             <img src="screenshots/Arkanoid/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1074,7 +1074,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">08</div>
         <div class="game-content">
           <div class="game-name">PAC-MAN</div>
-          <div class="game-desc">Hayaletlerden kaç, labirentteki tüm noktaları topla.</div>
+          <div class="game-desc">Escape ghosts and collect all dots in the maze.</div>
           <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
           <div class="game-gallery">
             <img src="screenshots/Pacman/SCR_001.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1090,7 +1090,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">09</div>
         <div class="game-content">
           <div class="game-name">FLAPPY BIRD</div>
-          <div class="game-desc">Boru engellerinin arasından dikkatlice uç.</div>
+          <div class="game-desc">Fly carefully through the pipe obstacles.</div>
           <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
           <div class="game-gallery">
             <img src="screenshots/Flappy/SCR_002.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1107,7 +1107,7 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
         <div class="game-idx">10</div>
         <div class="game-content">
           <div class="game-name">SNAKE</div>
-          <div class="game-desc">Kuyruğunu uzat, duvarlara ve kendine çarpma.</div>
+          <div class="game-desc">Grow your tail, don't hit the walls or yourself.</div>
           <span class="game-tag tag-new">RETRO</span><span class="game-tag tag-core">ARCADE</span>
           <div class="game-gallery">
             <img src="screenshots/Snake/SCR_005.bmp" class="game-shot" onclick="openLightbox(this)" loading="lazy">
@@ -1126,9 +1126,9 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 
   <!-- ============ OS FEATURES ============ -->
   <section>
-    <div class="eyebrow">İŞLETİM SİSTEMİ</div>
+    <div class="eyebrow">OPERATING SYSTEM</div>
     <h2 class="section-title" style="margin-bottom: 16px;">E-OS Launcher.</h2>
-    <p class="section-sub">Tüm oyunlara ev sahipliği yapan akıcı, dönen (carousel) ana menü arayüzü.</p>
+    <p class="section-sub">Fluid, rotating (carousel) main menu interface hosting all games.</p>
 
     <div class="reveal stagger-1" style="display: flex; justify-content: center; margin-bottom: 60px;">
       <div class="eos-hardware">
@@ -1140,18 +1140,18 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
     <div class="feature-grid">
       <div class="feature-cell reveal stagger-1">
         <div class="feature-icon">[ pause ]</div>
-        <div class="feature-title">Donanımsal Duraklatma</div>
-        <div class="feature-desc">Hangi oyunda olursan ol, joystick butonuna basınca ilgili RTOS task'ı anında askıya alınır.</div>
+        <div class="feature-title">Hardware Pause</div>
+        <div class="feature-desc">Whichever game you are in, pressing the joystick button instantly suspends the relevant RTOS task.</div>
       </div>
       <div class="feature-cell reveal">
         <div class="feature-icon">[ ota ]</div>
         <div class="feature-title">OTA Bootloader</div>
-        <div class="feature-desc">SD karttan binary okuyup flash'a yazar. RTC magic value ile reboot sonrası oyun seçimi hatırlanır.</div>
+        <div class="feature-desc">Reads binary from SD card and writes to flash. Game selection is remembered after reboot via RTC magic value.</div>
       </div>
       <div class="feature-cell reveal">
         <div class="feature-icon">[ ui ]</div>
-        <div class="feature-title">Double-Buffered Menü</div>
-        <div class="feature-desc">Dönen carousel menü, ekran yırtılması olmadan akar — telefon hissiyatına yakın geçişler.</div>
+        <div class="feature-title">Double-Buffered Menu</div>
+        <div class="feature-desc">Rotating carousel menu flows without screen tearing — transitions close to a smartphone feel.</div>
       </div>
     </div>
   </section>
@@ -1160,25 +1160,25 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 
   <!-- ============ ROADMAP ============ -->
   <section id="yol-haritasi">
-    <div class="eyebrow">YOL HARİTASI</div>
-    <h2 class="section-title">Sırada ne var.</h2>
+    <div class="eyebrow">ROADMAP</div>
+    <h2 class="section-title">What's next.</h2>
 
     <div>
       <div class="roadmap-row">
-        <div class="roadmap-tag done">v1.0 — tamam</div>
-        <div class="roadmap-text"><strong>10 oyunluk kütüphane</strong> — Mode 7, Wire-Frame 3D, Galactic Strike ve Platformer ile çekirdek 6 oyuna katıldı. Ortak <span class="mono" style="color:var(--paper)">hardware_config.h</span> ile pin tanımları tekilleştirildi.</div>
+        <div class="roadmap-tag done">v1.0 — completed</div>
+        <div class="roadmap-text"><strong>10-game library</strong> — Mode 7, Wire-Frame 3D, Galactic Strike, and Platformer joined the core 6 games. Pin definitions were unified with a common <span class="mono" style="color:var(--paper)">hardware_config.h</span>.</div>
       </div>
       <div class="roadmap-row">
-        <div class="roadmap-tag planned">v2.0 — planlanan</div>
-        <div class="roadmap-text"><strong>LiPo batarya entegrasyonu</strong> — korumalı TP4056 şarj devresi, voltaj bölücü ile yazılımsal pil yüzdesi takibi.</div>
+        <div class="roadmap-tag planned">v2.0 — planned</div>
+        <div class="roadmap-text"><strong>LiPo battery integration</strong> — protected TP4056 charging circuit, software battery percentage tracking via voltage divider.</div>
       </div>
       <div class="roadmap-row">
-        <div class="roadmap-tag planned">v2.1 — planlanan</div>
-        <div class="roadmap-text"><strong>I²S ses çıkışı</strong> — MAX98357A amplifikatör ile buzzer'ın yerini gerçek PCM ses alacak.</div>
+        <div class="roadmap-tag planned">v2.1 — planned</div>
+        <div class="roadmap-text"><strong>I²S audio output</strong> — real PCM sound will replace the buzzer using a MAX98357A amplifier.</div>
       </div>
       <div class="roadmap-row">
-        <div class="roadmap-tag planned">v3.0 — fikir aşamasında</div>
-        <div class="roadmap-text"><strong>ESP-NOW multiplayer</strong> — ESP32-S3'ün dahili radyosu üzerinden iki cihaz arası düşük gecikmeli bağlantı.</div>
+        <div class="roadmap-tag planned">v3.0 — ideation</div>
+        <div class="roadmap-text"><strong>ESP-NOW multiplayer</strong> — low-latency connection between two devices via the ESP32-S3's internal radio.</div>
       </div>
     </div>
   </section>
@@ -1187,23 +1187,23 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 
   <!-- ============ BUILD ============ -->
   <section>
-    <div class="eyebrow">DERLEME</div>
-    <h2 class="section-title">Arduino IDE veya PlatformIO.</h2>
-    <p class="section-sub">Gerekli kütüphaneler ve pin ayarları aşağıda — tüm detaylar repo içinde.</p>
+    <div class="eyebrow">COMPILATION</div>
+    <h2 class="section-title">Arduino IDE or PlatformIO.</h2>
+    <p class="section-sub">Required libraries and pin settings are below — all details in the repo.</p>
 
     <div class="code-window">
       <div class="code-titlebar">
         <div class="code-dot" style="background:#E8543D"></div>
         <div class="code-dot" style="background:#E8A33D"></div>
         <div class="code-dot" style="background:#3BD16F"></div>
-        <span>kurulum</span>
+        <span>setup</span>
       </div>
-      <pre><span class="cm">// Gerekli kütüphaneler</span>
-<span class="fn">TFT_eSPI</span>        <span class="cm">// Ekran sürücüsü — User_Setup.h ile yapılandırılır</span>
-<span class="fn">U8g2lib</span>         <span class="cm">// OLED sürücüsü (HW I2C modunda)</span>
-<span class="fn">Preferences</span>     <span class="cm">// NVS — skor / ayar kalıcılığı</span>
+      <pre><span class="cm">// Required libraries</span>
+<span class="fn">TFT_eSPI</span>        <span class="cm">// Display driver — configured via User_Setup.h</span>
+<span class="fn">U8g2lib</span>         <span class="cm">// OLED driver (in HW I2C mode)</span>
+<span class="fn">Preferences</span>     <span class="cm">// NVS — score / setting persistence</span>
 
-<span class="cm">// Tüm oyunlar ortak pin dosyasını include eder</span>
+<span class="cm">// All games include the common pin file</span>
 <span class="kw">#include</span> <span class="str">"../hardware_config.h"</span></pre>
     </div>
   </section>
@@ -1213,11 +1213,11 @@ a:focus-visible, button:focus-visible, .schem-node:focus-visible circle {
 <footer>
   <div class="wrap">
     <div class="footer-row">
-      <div class="footer-sig">E-OS — ESP32 el konsolu.</div>
+      <div class="footer-sig">E-OS — ESP32 handheld console.</div>
       <div class="footer-links">
         <a href="https://github.com/emir173/esp32-console" target="_blank" rel="noopener">GitHub</a>
         <a href="#pinout">Pinout</a>
-        <a href="#oyunlar">Oyunlar</a>
+        <a href="#oyunlar">Games</a>
       </div>
     </div>
   </div>
@@ -1356,7 +1356,7 @@ codePres.forEach(codePre => {
 <div id="lightbox" class="lightbox" onclick="closeLightbox()">
   <div class="lightbox-close" onclick="closeLightbox()">×</div>
   <div id="lb-prev" class="lb-nav lb-prev" onclick="navLightbox(-1, event)">&#10094;</div>
-  <img id="lightbox-img" src="" alt="Oyun İçi Ekran Görüntüsü" onclick="event.stopPropagation()">
+  <img id="lightbox-img" src="" alt="In-Game Screenshot" onclick="event.stopPropagation()">
   <div id="lb-next" class="lb-nav lb-next" onclick="navLightbox(1, event)">&#10095;</div>
 </div>
 
@@ -1601,7 +1601,7 @@ document.addEventListener('keydown', (e) => {
     { label:"3D WIRE", pri:RGB_FIX(0,255,0), dim:RGB_FIX(0,80,0), draw:drawBigIconWire3D, drawSmall:drawSmallIconWire3D },
     { label:"STRIKE", pri:RGB_FIX(100,200,255), dim:RGB_FIX(40,80,100), draw:drawBigIconStrike, drawSmall:drawSmallIconStrike },
     { label:"JUMP", pri:RGB_FIX(255,69,0), dim:RGB_FIX(100,30,0), draw:drawBigIconJump, drawSmall:drawSmallIconJump },
-    { label:"AYARLAR", pri:RGB_FIX(150,150,150), dim:RGB_FIX(50,50,50), draw:drawBigIconSettings, drawSmall:drawSmallIconSettings }
+    { label:"SETTINGS", pri:RGB_FIX(150,150,150), dim:RGB_FIX(50,50,50), draw:drawBigIconSettings, drawSmall:drawSmallIconSettings }
   ];
 
   // ===================== UI DRAWING =====================
@@ -1624,8 +1624,8 @@ document.addEventListener('keydown', (e) => {
   function drawControlHints(blink) {
     let hintY=114; drawHLine(10,hintY-2,140,COL_DARK_GRAY);
     ctx.font="9px 'Courier New'"; ctx.fillStyle = blink ? COL_ACCENT : COL_GRAY; ctx.fillText("A:",8,hintY+8);
-    ctx.fillStyle = COL_WHITE; ctx.fillText("Baslat",20,hintY+8);
-    ctx.fillStyle = blink ? COL_ACCENT : COL_GRAY; ctx.fillText("B:",108,hintY+8); ctx.fillStyle = COL_WHITE; ctx.fillText("Bilgi",120,hintY+8);
+    ctx.fillStyle = COL_WHITE; ctx.fillText("Start",20,hintY+8);
+    ctx.fillStyle = blink ? COL_ACCENT : COL_GRAY; ctx.fillText("B:",108,hintY+8); ctx.fillStyle = COL_WHITE; ctx.fillText("Info",120,hintY+8);
   }
 
   // ===================== STATE & LOGIC =====================
