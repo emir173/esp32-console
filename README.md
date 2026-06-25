@@ -1,3 +1,7 @@
+<div align="right">
+  <b>🇹🇷 Türkçe</b> | <a href="README_EN.md">🇬🇧 English</a>
+</div>
+
 <div align="center">
   <img src="docs/images/hero.jpg" alt="E-OS Console" width="600" style="border-radius: 12px;"/>
   <br/><br/>
