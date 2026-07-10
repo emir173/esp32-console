@@ -1,0 +1,38 @@
+# OS X
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Arduino IDE / ESP32 Build Artifacts
+**/build/
+build/
+*.bin
+*.elf
+*.map
+*.hex
+*.a
+*.o
+
+# Sürümler ve Notlar
+Sürümler/
+Eski Sürümler/
+Sürümler/*.txt
+
+# Büyük Binary Dosyalar (Assetler hariç)
+*.wad
+BMP/
+
+# Geliştirme Araçları
+map editör/
+map editor/
+
+# Editor klasörleri
+.vscode/
+.idea/
+*.code-workspace
+
+# Yerel/gecici (2026-07-08)
+.claude/
+captures/

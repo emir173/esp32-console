@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-OS Platformer — Harita Editörü</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0a0c14;
+            --panel-bg: rgba(20, 28, 45, 0.7);
+            --primary: #50c8ff;
+            --primary-hover: #80d8ff;
+            --accent: #ff6b6b;
+            --text: #c5cad3;
+            --border: rgba(80, 200, 255, 0.15);
+            --cell-size: 32px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: radial-gradient(ellipse at top left, #0d1525, var(--bg-color));
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            text-align: center;
+            padding: 16px 20px;
+            background: rgba(0,0,0,0.5);
+            border-bottom: 2px solid var(--primary);
+            box-shadow: 0 0 25px rgba(80, 200, 255, 0.15);
+        }
+
+        header h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2rem;
+            color: #fff;
+            letter-spacing: 2px;
+            text-shadow: 0 0 12px var(--primary);
+        }
+        header h1 span { color: var(--primary); }
+
+        .container {
+            display: flex;
+            flex: 1;
+            padding: 16px;
+            gap: 16px;
+            max-width: 1800px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+
+        /* ===== TOOLBAR ===== */
+        .toolbar {
+            flex: 0 0 220px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .toolbar h2 {
+            font-family: 'Outfit', sans-serif;
+            color: #fff;
+            font-size: 1.1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+        }
+
+        .tool-group h3 {
+            font-size: 0.75rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+
+        .brush-btn {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 10px;
+            margin-bottom: 4px;
+            width: 100%;
+            text-align: left;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .brush-btn:hover {
+            background: rgba(80, 200, 255, 0.08);
+            border-color: var(--primary);
+            transform: translateX(3px);
+        }
+        .brush-btn.active {
+            background: rgba(80, 200, 255, 0.15);
+            border-color: var(--primary);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(80, 200, 255, 0.3);
+        }
+
+        .color-dot {
+            width: 14px; height: 14px;
+            border-radius: 3px;
+            border: 1px solid rgba(255,255,255,0.2);
+            flex-shrink: 0;
+        }
+
+        .level-select {
+            width: 100%;
+            padding: 8px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .action-btn {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: #000;
+            border: none;
+            box-shadow: 0 0 12px rgba(80, 200, 255, 0.4);
+        }
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px rgba(80, 200, 255, 0.6);
+        }
+        .btn-danger {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+        .btn-danger:hover {
+            background: rgba(255, 107, 107, 0.1);
+        }
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .btn-secondary:hover {
+            background: rgba(80, 200, 255, 0.05);
+            border-color: var(--primary);
+        }
+
+        /* ===== EDITOR ===== */
+        .editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+        }
+        .editor-header .coords {
+            color: var(--primary);
+            font-family: 'Courier New', monospace;
+        }
+
+        .grid-scroll {
+            overflow-x: auto;
+            overflow-y: hidden;
+            border: 2px solid rgba(80, 200, 255, 0.2);
+            border-radius: 8px;
+            background: #060810;
+            position: relative;
+        }
+
+        .grid-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(40, var(--cell-size));
+            grid-template-rows: repeat(16, var(--cell-size));
+            gap: 1px;
+            background: rgba(30, 40, 60, 0.3);
+        }
+
+        .row-labels {
+            position: absolute;
+            left: -20px;
+            top: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .row-label {
+            height: calc(var(--cell-size) + 1px);
+            display: flex;
+            align-items: center;
+            font-size: 9px;
+            color: #555;
+            font-family: monospace;
+        }
+
+        .cell {
+            width: var(--cell-size);
+            height: var(--cell-size);
+            cursor: crosshair;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            user-select: none;
+            transition: filter 0.1s;
+            position: relative;
+        }
+        .cell:hover {
+            filter: brightness(1.4);
+            outline: 2px solid var(--primary);
+            z-index: 10;
+        }
+
+        /* Tile Styles */
+        .t-air    { background: #0d1020; }
+        .t-ground { background: #2d8c37; border-top: 3px solid #5dda6a; }
+        .t-brick  { background: #b84332; background-image: repeating-linear-gradient(90deg, transparent, transparent 14px, #933428 14px, #933428 16px); }
+        .t-spike  { background: #0d1020; }
+        .t-spike::after {
+            content: '';
+            width: 0; height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 18px solid #c0c0d0;
+            position: absolute; bottom: 2px;
+        }
+        .t-coin   { background: #0d1020; }
+        .t-coin::after {
+            content: '';
+            width: 12px; height: 12px;
+            background: radial-gradient(circle, #ffe066, #d4a017);
+            border-radius: 50%;
+            box-shadow: 0 0 6px rgba(255, 220, 40, 0.6);
+        }
+        .t-flag   { background: #0d1020; }
+        .t-flag::after {
+            content: '🚩';
+            font-size: 18px;
+        }
+        .t-enemy  { background: #0d1020; }
+        .t-enemy::after {
+            content: '👾';
+            font-size: 18px;
+        }
+
+        /* Spawn indicator */
+        .spawn-marker {
+            position: absolute;
+            bottom: 2px; left: 2px;
+            width: 8px; height: 8px;
+            background: #50c8ff;
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--primary);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.7); }
+        }
+
+        /* ===== PREVIEW + CODE ===== */
+        .output-panel {
+            flex: 0 0 380px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        #previewCanvas {
+            width: 100%;
+            height: 200px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            background: #0d1020;
+            image-rendering: pixelated;
+        }
+
+        .preview-legend {
+            display: flex;
+            gap: 10px;
+            font-size: 0.7rem;
+            color: #666;
+            flex-wrap: wrap;
+        }
+        .preview-legend span {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .legend-dot {
+            width: 8px; height: 8px;
+            border-radius: 2px;
+            display: inline-block;
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 12px;
+            font-size: 0.75rem;
+            padding: 8px 12px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+        }
+        .stats-bar .stat { color: var(--primary); }
+
+        textarea {
+            width: 100%;
+            flex: 1;
+            min-height: 200px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid var(--border);
+            color: #00ff88;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            padding: 10px;
+            border-radius: 6px;
+            resize: none;
+            outline: none;
+        }
+        textarea:focus { border-color: var(--primary); }
+
+        .jump-helper {
+            font-size: 0.7rem;
+            color: #888;
+            line-height: 1.5;
+            padding: 8px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 6px;
+            border: 1px solid rgba(80,200,255,0.1);
+        }
+        .jump-helper strong { color: var(--primary); }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1><span>E-OS</span> PLATFORMER — HARİTA EDİTÖRÜ</h1>
+</header>
+
+<div class="container">
+    <!-- TOOLBAR -->
+    <div class="panel toolbar">
+        <h2>🎮 Seviye</h2>
+        <select id="levelSelect" class="level-select">
+            <option value="0">Level 1 — Tutorial</option>
+            <option value="1">Level 2 — Orta</option>
+            <option value="2">Level 3 — Zor</option>
+        </select>
+
+        <div class="tool-group">
+            <h3>🏗️ Yapı Blokları</h3>
+            <button class="brush-btn" data-val="0"><div class="color-dot" style="background:#0d1020;"></div> Hava (Silgi)</button>
+            <button class="brush-btn active" data-val="1"><div class="color-dot" style="background:#2d8c37;border-top:2px solid #5dda6a;"></div> Çim Zemin</button>
+            <button class="brush-btn" data-val="2"><div class="color-dot" style="background:#b84332;"></div> Tuğla</button>
+            <button class="brush-btn" data-val="3"><div class="color-dot" style="background:#c0c0d0;"></div> Diken ⚠️</button>
+        </div>
+
+        <div class="tool-group">
+            <h3>✨ Nesneler</h3>
+            <button class="brush-btn" data-val="4"><div class="color-dot" style="background:#ffd700; border-radius:50%;"></div> Altın Coin</button>
+            <button class="brush-btn" data-val="5"><div class="color-dot" style="background:#ff3333;"></div> 🚩 Bayrak (Bitiş)</button>
+            <button class="brush-btn" data-val="6"><div class="color-dot" style="background:#dd4444;"></div> 👾 Düşman</button>
+        </div>
+
+        <div class="jump-helper">
+            <strong>Zıplama Fiziği:</strong><br>
+            ↕ Yükseklik: <strong>3.5 tile</strong><br>
+            ↔ Menzil: <strong>4.5 tile</strong><br>
+            ⚡ 2 tile yukarıda ↔ <strong>~3 tile yatay</strong><br>
+            <br>
+            <strong>Kural:</strong> Basamaklar arası max <strong>2 tile boşluk</strong> + 2 tile yukarı
+        </div>
+
+        <button class="action-btn btn-danger" id="clearBtn">🗑️ Seviyeyi Temizle</button>
+        <button class="action-btn btn-secondary" id="fillGroundBtn">🌍 Alt Satırı Doldur</button>
+    </div>
+
+    <!-- EDITOR GRID -->
+    <div class="panel editor-panel">
+        <div class="editor-header">
+            <span>40×16 Tile Grid (8px per tile)</span>
+            <span class="coords" id="coordDisplay">R:- C:-</span>
+        </div>
+        <div class="grid-scroll">
+            <div class="grid-wrapper">
+                <div id="grid" class="grid"></div>
+            </div>
+        </div>
+        <div style="margin-top:8px;">
+            <canvas id="previewCanvas" width="320" height="128"></canvas>
+            <div class="preview-legend">
+                <span><div class="legend-dot" style="background:#2d8c37;"></div> Çim</span>
+                <span><div class="legend-dot" style="background:#b84332;"></div> Tuğla</span>
+                <span><div class="legend-dot" style="background:#c0c0d0;"></div> Diken</span>
+                <span><div class="legend-dot" style="background:#ffd700;border-radius:50%;"></div> Coin</span>
+                <span><div class="legend-dot" style="background:#ff3333;"></div> Bayrak</span>
+                <span><div class="legend-dot" style="background:#50c8ff;"></div> Oyuncu</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- CODE OUTPUT -->
+    <div class="panel output-panel">
+        <h2>📋 Kod Çıktısı</h2>
+        <div class="stats-bar" id="statsBar">
+            <span>Coin: <span class="stat" id="statCoins">0</span></span>
+            <span>Düşman: <span class="stat" id="statEnemies">0</span></span>
+            <span>Bayrak: <span class="stat" id="statFlags">0</span></span>
+            <span>Zemin: <span class="stat" id="statGround">0</span></span>
+        </div>
+        <button class="action-btn btn-primary" id="generateBtn">⚡ Arduino Kodu Üret</button>
+        <button class="action-btn btn-secondary" id="generateAllBtn">📦 3 Seviye Birlikte Üret</button>
+        <button class="action-btn btn-secondary" id="copyBtn">📋 Kopyala</button>
+        <textarea id="output" placeholder="Kod üretmek için ⚡ butonuna basın..."></textarea>
+    </div>
+</div>
+
+<script>
+const MAP_W = 40, MAP_H = 16;
+const NUM_LEVELS = 3;
+
+// 3 seviye verisi
+const levels = [];
+for (let i = 0; i < NUM_LEVELS; i++) {
+    levels.push(Array.from({length: MAP_H}, () => Array(MAP_W).fill(0)));
+}
+
+let currentLevel = 0;
+let currentBrush = 1;
+let isDrawing = false;
+let lastCell = null;
+
+const tileNames = ['Hava','Çim','Tuğla','Diken','Coin','Bayrak','Düşman'];
+const tileClasses = ['t-air','t-ground','t-brick','t-spike','t-coin','t-flag','t-enemy'];
+
+// ===== GRID BUILD =====
+const gridEl = document.getElementById('grid');
+const cells = [];
+
+for (let r = 0; r < MAP_H; r++) {
+    for (let c = 0; c < MAP_W; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell t-air';
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+
+        cell.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isDrawing = true;
+            paint(r, c);
+        });
+        cell.addEventListener('mouseenter', () => {
+            document.getElementById('coordDisplay').textContent = `R:${r} C:${c}`;
+            if (isDrawing) paint(r, c);
+        });
+        cell.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            // Right-click = eraser
+            levels[currentLevel][r][c] = 0;
+            updateCell(r, c);
+            updateStats();
+            drawPreview();
+        });
+
+        gridEl.appendChild(cell);
+        cells.push(cell);
+    }
+}
+
+document.addEventListener('mouseup', () => { isDrawing = false; lastCell = null; });
+
+function paint(r, c) {
+    const key = `${r},${c}`;
+    if (lastCell === key) return;
+    lastCell = key;
+    levels[currentLevel][r][c] = currentBrush;
+    updateCell(r, c);
+    updateStats();
+    drawPreview();
+}
+
+function updateCell(r, c) {
+    const idx = r * MAP_W + c;
+    const cell = cells[idx];
+    const val = levels[currentLevel][r][c];
+    cell.className = 'cell ' + tileClasses[val];
+}
+
+function updateAllCells() {
+    for (let r = 0; r < MAP_H; r++) {
+        for (let c = 0; c < MAP_W; c++) {
+            updateCell(r, c);
+        }
+    }
+}
+
+// ===== TOOLBAR =====
+document.querySelectorAll('.brush-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.brush-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentBrush = parseInt(btn.dataset.val);
+    });
+});
+
+document.getElementById('levelSelect').addEventListener('change', (e) => {
+    currentLevel = parseInt(e.target.value);
+    updateAllCells();
+    updateStats();
+    drawPreview();
+});
+
+let clearPending = false;
+document.getElementById('clearBtn').addEventListener('click', () => {
+    if (!clearPending) {
+        clearPending = true;
+        document.getElementById('clearBtn').textContent = '⚠️ EMİN MİSİN? (tekrar tıkla)';
+        document.getElementById('clearBtn').style.background = 'rgba(255,60,60,0.2)';
+        setTimeout(() => {
+            clearPending = false;
+            document.getElementById('clearBtn').textContent = '🗑️ Seviyeyi Temizle';
+            document.getElementById('clearBtn').style.background = '';
+        }, 3000);
+        return;
+    }
+    clearPending = false;
+    document.getElementById('clearBtn').textContent = '🗑️ Seviyeyi Temizle';
+    document.getElementById('clearBtn').style.background = '';
+    for (let r = 0; r < MAP_H; r++)
+        for (let c = 0; c < MAP_W; c++)
+            levels[currentLevel][r][c] = 0;
+    updateAllCells();
+    updateStats();
+    drawPreview();
+});
+
+document.getElementById('fillGroundBtn').addEventListener('click', () => {
+    for (let c = 0; c < MAP_W; c++)
+        levels[currentLevel][MAP_H - 1][c] = 1;
+    updateAllCells();
+    updateStats();
+    drawPreview();
+});
+
+// ===== STATS =====
+function updateStats() {
+    let coins = 0, enemies = 0, flags = 0, ground = 0;
+    const map = levels[currentLevel];
+    for (let r = 0; r < MAP_H; r++) {
+        for (let c = 0; c < MAP_W; c++) {
+            const v = map[r][c];
+            if (v === 4) coins++;
+            if (v === 6) enemies++;
+            if (v === 5) flags++;
+            if (v === 1 || v === 2) ground++;
+        }
+    }
+    document.getElementById('statCoins').textContent = coins;
+    document.getElementById('statEnemies').textContent = enemies;
+    document.getElementById('statFlags').textContent = flags;
+    document.getElementById('statGround').textContent = ground;
+}
+
+// ===== PREVIEW =====
+const pvCanvas = document.getElementById('previewCanvas');
+const pvCtx = pvCanvas.getContext('2d');
+
+const TILE_PV = 8; // Preview tile boyutu
+
+function drawPreview() {
+    const w = pvCanvas.width;
+    const h = pvCanvas.height;
+    pvCtx.fillStyle = '#191433';
+    pvCtx.fillRect(0, 0, w, h);
+
+    const map = levels[currentLevel];
+
+    for (let r = 0; r < MAP_H; r++) {
+        for (let c = 0; c < MAP_W; c++) {
+            const v = map[r][c];
+            if (v === 0) continue;
+
+            const x = c * TILE_PV;
+            const y = r * TILE_PV;
+
+            switch (v) {
+                case 1: // Çim
+                    pvCtx.fillStyle = '#2d8c37';
+                    pvCtx.fillRect(x, y, TILE_PV, TILE_PV);
+                    pvCtx.fillStyle = '#5dda6a';
+                    pvCtx.fillRect(x, y, TILE_PV, 2);
+                    break;
+                case 2: // Tuğla
+                    pvCtx.fillStyle = '#b84332';
+                    pvCtx.fillRect(x, y, TILE_PV, TILE_PV);
+                    pvCtx.fillStyle = '#933428';
+                    pvCtx.fillRect(x, y + 3, TILE_PV, 1);
+                    break;
+                case 3: // Diken
+                    pvCtx.fillStyle = '#c0c0d0';
+                    pvCtx.beginPath();
+                    pvCtx.moveTo(x + TILE_PV/2, y);
+                    pvCtx.lineTo(x, y + TILE_PV);
+                    pvCtx.lineTo(x + TILE_PV, y + TILE_PV);
+                    pvCtx.fill();
+                    break;
+                case 4: // Coin
+                    pvCtx.fillStyle = '#ffd700';
+                    pvCtx.beginPath();
+                    pvCtx.arc(x + TILE_PV/2, y + TILE_PV/2, 3, 0, Math.PI * 2);
+                    pvCtx.fill();
+                    break;
+                case 5: // Bayrak
+                    pvCtx.fillStyle = '#aaa';
+                    pvCtx.fillRect(x + 1, y, 1, TILE_PV);
+                    pvCtx.fillStyle = '#ff3333';
+                    pvCtx.fillRect(x + 2, y + 1, 5, 3);
+                    break;
+                case 6: // Düşman
+                    pvCtx.fillStyle = '#dd4444';
+                    pvCtx.fillRect(x + 1, y + 1, TILE_PV - 2, TILE_PV - 2);
+                    pvCtx.fillStyle = '#fff';
+                    pvCtx.fillRect(x + 2, y + 3, 2, 2);
+                    pvCtx.fillRect(x + 5, y + 3, 2, 2);
+                    break;
+            }
+        }
+    }
+
+    // Oyuncu spawn (col 2, row 14 - zemin üstü)
+    pvCtx.fillStyle = '#50c8ff';
+    pvCtx.fillRect(2 * TILE_PV, 14 * TILE_PV - 7, 6, 7);
+    pvCtx.fillStyle = '#fff';
+    pvCtx.fillRect(2 * TILE_PV + 3, 14 * TILE_PV - 5, 2, 2);
+
+    // Zıplama menzili göstergesi
+    pvCtx.strokeStyle = 'rgba(80, 200, 255, 0.3)';
+    pvCtx.setLineDash([2, 2]);
+    // 3.5 tile yükseklik, 4.5 tile genişlik ark
+    const spawnX = 2 * TILE_PV + 3;
+    const spawnY = 14 * TILE_PV - 7;
+    pvCtx.beginPath();
+    pvCtx.ellipse(spawnX, spawnY, 4.5 * TILE_PV, 3.5 * TILE_PV, 0, -Math.PI, 0);
+    pvCtx.stroke();
+    pvCtx.setLineDash([]);
+}
+
+// ===== CODE GENERATION =====
+function generateLevelCode(lvlIdx, varName) {
+    const map = levels[lvlIdx];
+    let code = `const uint8_t ${varName}[MAP_H * MAP_W] PROGMEM = {\n`;
+    code += `//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9\n`;
+
+    for (let r = 0; r < MAP_H; r++) {
+        code += '    ';
+        for (let c = 0; c < MAP_W; c++) {
+            code += map[r][c];
+            if (c < MAP_W - 1 || r < MAP_H - 1) code += ',';
+        }
+        code += ` // ${r}\n`;
+    }
+    code += '};\n';
+    return code;
+}
+
+document.getElementById('generateBtn').addEventListener('click', () => {
+    const names = ['LVL1', 'LVL2', 'LVL3'];
+    const code = generateLevelCode(currentLevel, names[currentLevel]);
+
+    // Doğrulama
+    const map = levels[currentLevel];
+    let warnings = [];
+    let hasFlag = false;
+    for (let r = 0; r < MAP_H; r++) {
+        for (let c = 0; c < MAP_W; c++) {
+            if (map[r][c] === 5) hasFlag = true;
+        }
+    }
+    if (!hasFlag) warnings.push('⚠️ Bayrak (bitiş noktası) yok!');
+
+    // Zemin boşluk kontrolü
+    let maxGap = 0, currentGap = 0;
+    for (let c = 0; c < MAP_W; c++) {
+        let hasSolid = false;
+        for (let r = 0; r < MAP_H; r++) {
+            if (map[r][c] === 1 || map[r][c] === 2) { hasSolid = true; break; }
+        }
+        if (!hasSolid) { currentGap++; maxGap = Math.max(maxGap, currentGap); }
+        else currentGap = 0;
+    }
+    if (maxGap > 4) warnings.push(`⚠️ ${maxGap} tile genişliğinde dikey boşluk var (max 4 önerilir)`);
+
+    let output = '';
+    if (warnings.length > 0) output = '// UYARILAR:\n// ' + warnings.join('\n// ') + '\n\n';
+    output += code;
+
+    document.getElementById('output').value = output;
+});
+
+document.getElementById('generateAllBtn').addEventListener('click', () => {
+    let code = '// ============================================================\n';
+    code += '//  SEVIYE VERILERI (PROGMEM) — Platformer Map Editor ile olusturuldu\n';
+    code += '//  0=hava, 1=cim, 2=tugla, 3=diken, 4=altin, 5=bayrak, 6=dusman\n';
+    code += '// ============================================================\n\n';
+
+    const names = ['LVL1', 'LVL2', 'LVL3'];
+    for (let i = 0; i < NUM_LEVELS; i++) {
+        code += generateLevelCode(i, names[i]);
+        code += '\n';
+    }
+
+    code += `const uint8_t* const LEVELS[NUM_LEVELS] PROGMEM = { LVL1, LVL2, LVL3 };\n`;
+
+    document.getElementById('output').value = code;
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+    const ta = document.getElementById('output');
+    ta.select();
+    document.execCommand('copy');
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = '✅ Kopyalandı!';
+    setTimeout(() => btn.textContent = '📋 Kopyala', 1500);
+});
+
+// ===== KEYBOARD SHORTCUTS =====
+document.addEventListener('keydown', (e) => {
+    const key = e.key;
+    if (key >= '0' && key <= '6') {
+        currentBrush = parseInt(key);
+        document.querySelectorAll('.brush-btn').forEach(b => {
+            b.classList.toggle('active', parseInt(b.dataset.val) === currentBrush);
+        });
+    }
+});
+
+// ===== INIT =====
+// Varsayılan seviyeleri yükle (mevcut oyundaki haritalar)
+const defaultLvl1 = [
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,4,0,4,0,4,0,0,0,4,0,4,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+const defaultLvl2 = [
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,4,0,4,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [1,1,1,1,1,1,1,1,3,3,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+const defaultLvl3 = [
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,6,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,4,0,4,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [1,1,1,1,1,1,3,3,0,0,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+// Load defaults
+for (let r = 0; r < MAP_H; r++)
+    for (let c = 0; c < MAP_W; c++) {
+        levels[0][r][c] = defaultLvl1[r][c];
+        levels[1][r][c] = defaultLvl2[r][c];
+        levels[2][r][c] = defaultLvl3[r][c];
+    }
+
+updateAllCells();
+updateStats();
+drawPreview();
+</script>
+</body>
+</html>
