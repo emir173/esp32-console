@@ -3,11 +3,16 @@
 // SPI Pinleri
 #define SPI_SCK  12
 #define SPI_MOSI 11
-#define SPI_MISO 42
+#define SPI_MISO 14
 
 // Chip Select Pinleri
 #define TFT_CS   15
 #define SD_CS    10
+
+// HS280S010B TFT control pins
+#define TFT_DC   13
+#define TFT_RST  7
+#define TFT_BL   16  // External backlight switch enable; never source LED current directly
 
 // Joystick Pinleri
 #define JOY_X    1
@@ -22,8 +27,8 @@
 #define BTN_D    4
 
 // I2C Pinleri (OLED)
-#define I2C_SDA  8
-#define I2C_SCL  9
+#define I2C_SDA  41
+#define I2C_SCL  42
 #define OLED_I2C_ADDR 0x3C
 
 // Diğer Donanımlar

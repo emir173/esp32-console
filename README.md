@@ -28,7 +28,7 @@ This project is a handheld console developed from scratch using the ESP32-S3 mic
 ### Hardware Architecture
 - **Processor:** Dual-Core ESP32-S3 running at 240 MHz.
 - **Dual Display:** 
-  - *Main Screen:* 160x128 Color TFT (SPI). Handles the main game rendering and UI.
+  - *Main Screen:* 320x240 HS280S010B/ST7789V Color TFT (SPI). Handles the main game rendering and UI.
   - *Secondary Screen:* 128x64 OLED (I2C). Located at the top of the device; displays system status and high scores.
 - **Memory:** 16MB Flash + 8MB PSRAM OPI. Massive memory bandwidth ensures a stutter-free experience.
 - **Audio & Controls:** 8-bit buzzer and an analog joystick (with hardware deadzone filtering).
@@ -148,7 +148,7 @@ To process and save this data as PNGs or GIFs on your computer, the Python tools
 ## How to Compile
 
 ### Required Libraries
-- `TFT_eSPI` — TFT display driver (ST7735)
+- `TFT_eSPI` — TFT display driver (ST7789V)
 - `U8g2` — OLED display driver (SH1106)
 - `SD` — SD card access
 - `Preferences` — NVS high-score saving
@@ -172,19 +172,21 @@ To process and save this data as PNGs or GIFs on your computer, the Python tools
 |-----|----------|
 | 12 | SPI SCK |
 | 11 | SPI MOSI |
-| 42 | SPI MISO |
+| 14 | SPI MISO |
 | 15 | TFT CS |
 | 10 | SD CS |
-| 41 | TFT DC |
-| 8 | I2C SDA (OLED) |
-| 9 | I2C SCL (OLED) |
+| 13 | TFT DC |
+| 7 | TFT RESET |
+| 16 | Backlight switch enable |
+| 41 | I2C SDA (OLED) |
+| 42 | I2C SCL (OLED) |
 | 1 | Joystick X |
 | 2 | Joystick Y |
 | 18 | Joystick SW |
 | 3 | Button A |
 | 21 | Button B |
-| 4 | Button C |
-| 6 | Button D |
+| 6 | Button C |
+| 4 | Button D |
 | 5 | Buzzer |
 
 ---

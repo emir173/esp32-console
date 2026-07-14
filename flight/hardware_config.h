@@ -3,7 +3,7 @@
 // SPI Pins
 #define SPI_SCK  12
 #define SPI_MOSI 11
-#define SPI_MISO 42
+#define SPI_MISO 14
 
 // Chip Select Pins
 #define TFT_CS   15
@@ -21,8 +21,8 @@
 #define BTN_D    6
 
 // I2C Pins (OLED)
-#define I2C_SDA  8
-#define I2C_SCL  9
+#define I2C_SDA  41
+#define I2C_SCL  42
 #define OLED_I2C_ADDR 0x3C
 
 // Other Hardware
