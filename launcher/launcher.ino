@@ -1758,7 +1758,7 @@ void setup() {
     // ─── BÖLÜM 1: Seri port + I2C hattı ───
     Serial.begin(115200);       // Debug için seri port
     startFrameDumper();         // Async USB Screenshot Dumper baslat
-    Wire.begin(8, 9);           // I2C: SDA=8, SCL=9 (OLED için)
+    Wire.begin(I2C_SDA, I2C_SCL); // I2C: GPIO41 SDA, GPIO42 SCL (OLED)
     Wire.setClock(400000);      // 400kHz hız — OLED tazelemesini hızlandırır
 
     // ─── BÖLÜM 2: Bootloader mod kontrolü (RTC magic byte) ───
