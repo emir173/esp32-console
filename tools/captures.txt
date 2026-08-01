@@ -1,0 +1,18 @@
+Launcher
+
+python tools/capture_gif.py --scale 4 --frames 300 --fps 50
+python tools/capture_gif.py --scale 4 --seconds 14 --fps 50
+python tools/record_video.py --scale 4 --seconds 10 --fps-mode fixed --fps 50
+
+
+Game
+python tools/capture_gif.py --scale 4 --frames 300
+python tools/capture_gif.py --scale 4 --seconds 12
+python tools/record_video.py --scale 4 --seconds 10
+
+
+ScreenShot
+
+python tools/capture.py --scale 4
+
+python tools/capture.py --scale 8
