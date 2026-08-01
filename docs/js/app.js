@@ -175,7 +175,7 @@ document.addEventListener('keydown', (e) => {
 
 // ===================== DYNAMIC RENDER =====================
 function renderDynamicItems(lang) {
-  function renderItem(item) {
+  function renderItem(item, customId) {
     const tagsHtml = item.tags.map(t => `<span class="${t.class}">${t.text}</span>`).join('');
     const galleryHtml = item.gallery.map((img, idx) => 
       `<div class="game-shot-wrap" onclick="openLightbox(this.querySelector('img'))">
@@ -185,7 +185,7 @@ function renderDynamicItems(lang) {
     
     return `
       <div class="game-row reveal">
-        <div class="game-idx">${item.id}</div>
+        <div class="game-idx">${customId}</div>
         <div class="game-content">
           <div class="game-name">${item.name}</div>
           <div class="game-desc">${lang === 'tr' ? item.desc_tr : item.desc_en}</div>
@@ -212,16 +212,24 @@ function renderDynamicItems(lang) {
     });
     
     let html = '';
+    let globalCounter = 1;
     for (const [cat, games] of Object.entries(categories)) {
       html += `<div class="category-header reveal" style="margin-top:40px; margin-bottom:20px; border-bottom:1px solid var(--line); padding-bottom:8px; font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:1px;">[ ${cat.toUpperCase()} ]</div>`;
-      html += games.map(renderItem).join('');
+      html += games.map(item => {
+        let currentId = String(globalCounter++).padStart(2, '0');
+        return renderItem(item, currentId);
+      }).join('');
     }
     gamesContainer.innerHTML = html;
   }
 
   const appsContainer = document.getElementById('apps-container');
   if (appsContainer && typeof appsData !== 'undefined') {
-    appsContainer.innerHTML = appsData.map(renderItem).join('');
+    let appCounter = 1;
+    appsContainer.innerHTML = appsData.map(item => {
+        let currentId = String(appCounter++).padStart(2, '0');
+        return renderItem(item, currentId);
+    }).join('');
   }
 
   // Re-initialize scroll reveal for new elements
