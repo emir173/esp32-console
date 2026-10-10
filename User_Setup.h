@@ -17,7 +17,7 @@
 #define TFT_RST  -1
 
 #define USE_HSPI_PORT
-#define SPI_FREQUENCY  27000000
+#define SPI_FREQUENCY  80000000
 
 #define LOAD_GLCD
 #define LOAD_FONT2
