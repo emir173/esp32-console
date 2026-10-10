@@ -64,6 +64,7 @@ unsigned long lineClearStart = 0;
 unsigned long lastFrameMs = 0;
 unsigned long lastFallMs = 0;
 unsigned long gameOverMs = 0;
+unsigned long pauseStartMs = 0;
 
 // ============ Joystick (EMA + Deadzone + DAS) ============
 int joyCenterX = 2048, joyCenterY = 2048;
@@ -73,7 +74,7 @@ int prevHDir = 0, prevVDir = 0;
 unsigned long dasNextMs = 0;     // yatay oto-tekrar zamani
 
 // ============ Butonlar (kenar tespiti) ============
-int prevBtnA = HIGH, prevBtnC = HIGH, prevBtnD = HIGH;
+int prevBtnA = HIGH, prevBtnB = HIGH, prevBtnC = HIGH, prevBtnD = HIGH;
 bool prevJoySw = true;
 
 // ============ FPS Sayaci ============
@@ -85,7 +86,16 @@ bool showFps = false;
 // ============ Ses & OS Donus ============
 bool soundEnabled = true;
 void playSound(uint16_t f, uint32_t d) { osPlaySound(f, d, soundEnabled); }
-void returnToOS() { osReturnToOS(tft, soundEnabled); }
+void saveHighScoreIfNeeded() {
+    if (score > highScore) {
+        highScore = score;
+        osSaveHighScore("hs_tetris", highScore);
+    }
+}
+void returnToOS() {
+    saveHighScoreIfNeeded();
+    osReturnToOS(tft, soundEnabled);
+}
 
 // ============================================================
 //  ZAFER FANFARI — Do-Mi-Sol arpej, NON-BLOCKING
@@ -101,7 +111,7 @@ struct Fanfare {
     void update() {
         if (!active) return;
         unsigned long now = millis();
-        if (now < nextMs) return;
+        if ((int32_t)(now - nextMs) < 0) return;
         switch (idx) {
             case 0: playSound(NOTE_C5, 50); nextMs = now + 60; break;   // Do5
             case 1: playSound(NOTE_E5, 50); nextMs = now + 60; break;   // Mi5
@@ -174,13 +184,23 @@ void doGameOver() {
     state = GAMEOVER;
     pieceActive = false;
     clearing = false;
+    numFullRows = 0;
+    fanfare.active = false;
     newRecord = (score > highScore);
-    if (newRecord) {
-        highScore = score;
-        osSaveHighScore("hs_tetris", highScore);
-    }
+    saveHighScoreIfNeeded();
     gameOverMs = millis();
     playSound(NOTE_E3, 120);   // olum sesi (en alcak ton)
+    updateOLED(true);
+}
+
+void enterGameMenu() {
+    saveHighScoreIfNeeded();
+    pieceActive = false;
+    clearing = false;
+    numFullRows = 0;
+    fanfare.active = false;
+    state = MENU;
+    updateOLED(true);
 }
 
 // ============================================================
@@ -280,8 +300,11 @@ void resetGame() {
     newRecord = false;
     clearing = false;
     numFullRows = 0;
+    fanfare.active = false;
     emaX = 0.0f;
     emaY = 0.0f;
+    hDir = vDir = 0;
+    prevHDir = prevVDir = 0;
     dasNextMs = 0;
     nextType = bag.next();
     spawnPiece();
@@ -396,6 +419,8 @@ void loop() {
     bool currJoySw = digitalRead(JOY_SW);
     if (prevJoySw && !currJoySw && state == PLAYING) {
         state = PAUSE;
+        pauseStartMs = millis();
+        fanfare.active = false;
         playSound(NOTE_G4, 40);
     }
     prevJoySw = currJoySw;
@@ -428,6 +453,9 @@ void loop() {
     int bA = digitalRead(BTN_A);
     bool pressA = (bA == LOW && prevBtnA == HIGH);
     prevBtnA = bA;
+    int bB = digitalRead(BTN_B);
+    bool pressB = (bB == LOW && prevBtnB == HIGH);
+    prevBtnB = bB;
     int bC = digitalRead(BTN_C);
     bool pressC = (bC == LOW && prevBtnC == HIGH);
     prevBtnC = bC;
@@ -452,7 +480,7 @@ void loop() {
                 playSound(NOTE_E5, 50);
                 resetGame();
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 returnToOS();
             }
             break;
@@ -462,26 +490,31 @@ void loop() {
         //  OYUN
         // ======================================
         case PLAYING: {
+            bool pieceChanged = false;
             if (clearing) {
                 // Satir temizleme animasyonu: giris kilitli, sadece sure bekle
                 if (now - lineClearStart >= LINE_CLEAR_MS) {
                     finishLineClear();
+                    pieceChanged = true;
                 }
             } else if (pieceActive) {
                 // ---- Dondurme / hard drop ----
                 if (pressA) tryRotate(true);    // saat yonu
-                if (pressC) tryRotate(false);   // saat tersi
-                if (pressD) hardDrop();
+                else if (pressC) tryRotate(false);   // saat tersi
+                if (pressD) {
+                    hardDrop();
+                    pieceChanged = true;
+                }
             }
 
-            // hardDrop/lockPiece durumu degistirmis olabilir
-            if (state == PLAYING && !clearing && pieceActive) {
+            // Yeni parca ayni karede eski giris/zaman degerleriyle ilerletilmez.
+            if (state == PLAYING && !clearing && pieceActive && !pieceChanged) {
                 // ---- Yatay hareket: DAS (ilk basis + oto-tekrar) ----
                 if (hDir != 0) {
                     if (prevHDir != hDir) {
                         tryMove(hDir);                       // ilk adim aninda
                         dasNextMs = now + DAS_DELAY_MS;
-                    } else if (now >= dasNextMs) {
+                    } else if ((int32_t)(now - dasNextMs) >= 0) {
                         tryMove(hDir);                       // oto-tekrar
                         dasNextMs = now + DAS_REPEAT_MS;
                     }
@@ -492,8 +525,9 @@ void loop() {
                 unsigned long iv = fallInterval();
                 if (softDrop && SOFT_DROP_MS < iv) iv = SOFT_DROP_MS;
 
-                if (now - lastFallMs >= iv) {
-                    lastFallMs = now;
+                unsigned long fallNow = millis();
+                if (fallNow - lastFallMs >= iv) {
+                    lastFallMs = fallNow;
                     if (!board.collides(curType, curRot, curX, curY + 1)) {
                         curY++;
                         if (softDrop) playSound(NOTE_C4, 15);
@@ -505,7 +539,7 @@ void loop() {
 
             // ---- Cizim ----
             bool flashOn = clearing &&
-                (((now - lineClearStart) / LINE_CLEAR_FLASH_MS) % 2 == 0);
+                (((millis() - lineClearStart) / LINE_CLEAR_FLASH_MS) % 2 == 0);
             drawGame(flashOn);
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
@@ -529,13 +563,11 @@ void loop() {
                 playSound(NOTE_D5, 50);   // restart
                 resetGame();
             }
-            if (!digitalRead(BTN_B) && now - gameOverMs > GAMEOVER_LOCK_MS) {
+            else if (pressB && now - gameOverMs > GAMEOVER_LOCK_MS) {
                 playSound(NOTE_D5, 40);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C) && now - gameOverMs > GAMEOVER_LOCK_MS) {
+            else if (pressC && now - gameOverMs > GAMEOVER_LOCK_MS) {
                 returnToOS();
             }
             break;
@@ -545,24 +577,27 @@ void loop() {
         //  PAUSE
         // ======================================
         case PAUSE: {
-            drawGame(false);
+            bool flashOn = clearing &&
+                (((pauseStartMs - lineClearStart) / LINE_CLEAR_FLASH_MS) % 2 == 0);
+            drawGame(flashOn);
             drawPauseOverlay(canvas);
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
             if (pressA) {              // [A] Continue (diger oyunlarla tutarli)
+                unsigned long resumeMs = millis();
+                if (clearing) lineClearStart += resumeMs - pauseStartMs;
                 state = PLAYING;
-                lastFallMs = millis();
-                lastFrameMs = millis();
+                lastFallMs = resumeMs;
+                lastFrameMs = resumeMs;
+                dasNextMs = resumeMs + DAS_DELAY_MS;
                 playSound(NOTE_G4, 40);
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 playSound(NOTE_D5, 40);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C)) {
+            else if (pressC) {
                 returnToOS();
             }
             break;

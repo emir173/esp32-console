@@ -6,6 +6,7 @@
 // ============================================================
 
 #include "Config.h"
+#include "Race.h"
 #include "../hardware_config.h"
 
 // ============================================================
@@ -17,6 +18,7 @@
 //  steer   : Direksiyon inputu (-1..1)
 // ============================================================
 inline void updatePlayerPhysics(Racer& p, float dt, bool gas, bool brake, float steer) {
+    steer = constrain(steer, -1.0f, 1.0f);
     if (gas)      p.speed += ACCEL * dt;
     else          p.speed -= DRAG * dt;
 
@@ -26,6 +28,8 @@ inline void updatePlayerPhysics(Racer& p, float dt, bool gas, bool brake, float 
 
     float steerAmount = steer * STEER_RATE * (p.speed / MAX_SPEED + 0.3f);
     p.angle += steerAmount * dt;
+    if (p.angle > M_PI) p.angle -= 2.0f * M_PI;
+    if (p.angle < -M_PI) p.angle += 2.0f * M_PI;
 
     p.x += cosf(p.angle) * p.speed * dt;
     p.y += sinf(p.angle) * p.speed * dt;
@@ -68,16 +72,13 @@ inline void updateMotorSound(const Racer& p, bool gas, bool soundEnabled, uint32
 //  player  : Oyuncu referansi (rubber-band mesafe hesabi icin)
 // ============================================================
 inline void updateAI(Racer& r, int& nextCP, int& lap, float dt, const Racer& player) {
-    Checkpoint& cp = checkpoints[nextCP % NUM_CHECKPOINTS];
-
-    float dx = cp.x - r.x;
-    float dy = cp.y - r.y;
-    float dist = sqrtf(dx * dx + dy * dy);
-
-    if (dist < cp.radius) {
-        nextCP = (nextCP + 1) % NUM_CHECKPOINTS;
-        if (nextCP == 0) lap++;
-    }
+    advanceCheckpoint(r, nextCP, lap);
+    // Sparse checkpoint-to-checkpoint chords cut across the grass. Aim a short
+    // distance ahead on the same curved centerline used to build the road.
+    float trackAngle = atan2f(r.y - MAP_H / 2.0f, r.x - MAP_W / 2.0f);
+    Vec2 target = trackPoint(trackAngle + 0.20f);
+    float dx = target.x - r.x;
+    float dy = target.y - r.y;
 
     float targetAngle = atan2f(dy, dx);
     float angleDiff = targetAngle - r.angle;
@@ -85,6 +86,8 @@ inline void updateAI(Racer& r, int& nextCP, int& lap, float dt, const Racer& pla
     while (angleDiff < -M_PI) angleDiff += 2 * M_PI;
 
     r.angle += angleDiff * 3.0f * dt;
+    if (r.angle > M_PI) r.angle -= 2.0f * M_PI;
+    if (r.angle < -M_PI) r.angle += 2.0f * M_PI;
 
     float targetSpeed = AI_NORMAL_SPEED;
     float pDist = sqrtf((r.x - player.x) * (r.x - player.x) +
@@ -113,12 +116,17 @@ inline void handlePlayerAICollision(Racer& player, Racer& ai, bool& collisionSfx
     float d2 = ddx * ddx + ddy * ddy;
 
     if (d2 < 16.0f) {
-        float d = sqrtf(d2); if (d < 0.001f) d = 0.001f;
+        // Exact overlap needs a deterministic normal; dividing a zero vector
+        // by epsilon leaves both cars stuck together.
+        float d = sqrtf(d2);
+        if (d < 0.001f) { ddx = 1.0f; ddy = 0.0f; d = 1.0f; }
         float push = 4.0f - d;
         player.x += (ddx / d) * push;
         player.y += (ddy / d) * push;
         ai.x     -= (ddx / d) * push * 0.5f;
         ai.y     -= (ddy / d) * push * 0.5f;
+        ai.x = constrain(ai.x, 1.0f, (float)MAP_W - 2);
+        ai.y = constrain(ai.y, 1.0f, (float)MAP_H - 2);
         player.speed *= 0.6f;
         collisionSfx = true;
     } else {

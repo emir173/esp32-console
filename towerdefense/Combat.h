@@ -422,7 +422,7 @@ inline void towerFire(Tower &t, Enemy &target) {
             // Yavaşlatma + hafif hasar
             spawnShot(cx, cy, ex, ey, COL_SHOT_FRO, false);
             playSound(NOTE_E4, SND_SHOT_MS);   // 330 Hz: buz
-            target.slowUntil = millis() + FROST_SLOW_MS;
+            target.slowUntil = enemyMillis() + FROST_SLOW_MS;
             damageEnemy(target, t.damage);
             break;
 
@@ -436,11 +436,14 @@ inline void towerFire(Tower &t, Enemy &target) {
         default: {   // TOWER_POISON — zamana yayılı hasar bulutu
             spawnShot(cx, cy, ex, ey, COL_TOWER_POISON, false);
             playSound(NOTE_E4, SND_POISON_MS); // 330 Hz: fışş
-            uint32_t now = millis();
+            uint64_t now = enemyMillis();
             // Zehir süresi biyom direncine göre kısalır (cehennemde ateşli düşman)
             uint32_t pdur = (uint32_t)(POISON_DUR_MS * BIOME_POISON_POWER[target.biome]);
+            // Aktif zehri yenilerken tik zamanını koru: birden fazla
+            // zehir kulesi hasarı sürekli erteleyemesin.
+            if (target.poisonUntil <= now)
+                target.nextPoisonMs = now + POISON_TICK_MS;
             target.poisonUntil  = now + pdur;
-            target.nextPoisonMs = now + POISON_TICK_MS;
             particles.emit(ex, ey, COL_TOWER_POISON, PART_N_POISON);
             damageEnemy(target, t.damage, COL_TOWER_POISON);
             break;

@@ -19,6 +19,8 @@ constexpr int SCR_W     = 160;
 constexpr int SCR_H     = 128;
 constexpr int HUD_H     = 12;
 constexpr int FRAME_MS  = 16;
+constexpr char HIGH_SCORE_KEY[] = "hs_strike";
+static_assert(sizeof(HIGH_SCORE_KEY) <= 16, "NVS key must fit 15 characters");
 
 // ============ RGB565 Renk Donusum Fonksiyonu ============
 constexpr uint16_t RGB(uint8_t r, uint8_t g, uint8_t b) {
@@ -140,6 +142,7 @@ extern float animTime;
 extern int animFrame;
 extern uint32_t stateTimer;
 extern int highScore;
+extern bool newRecord;
 
 extern uint32_t fpsFrameCount;
 extern uint32_t fpsStartTime;
@@ -151,3 +154,5 @@ extern bool showFps;
 // ============ Wrapper Fonksiyon Bildirimleri ============
 void playSound(uint16_t freq, uint32_t dur);
 void returnToOS();
+void saveBestIfNeeded();
+void finishGame();

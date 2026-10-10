@@ -336,6 +336,7 @@ inline void tickEnemies() {
 
         if (dist == 1) {
             enemyAttackPlayer(e);          // Bitişik → otomatik saldırı
+            if (player.hp <= 0) return;
         } else if (e.type == ENEMY_BAT || dist > AGGRO_RANGE) {
             enemyRandomStep(e);            // Yarasa veya menzil dışı → rastgele
         } else {

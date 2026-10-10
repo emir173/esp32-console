@@ -1,22 +1,24 @@
 #pragma once
 // ============================================================
 //  E-OS — Gelistirici Araclari (Dev Tools)
-//  FPS HUD + Screenshot (BMP → SD Kart)
+//  FPS HUD + USB screenshot / continuous GIF-video capture
 //
 //  Kullanim:
 //    1. Oyun .ino dosyasinin basina:  #include "../dev_tools.h"
-//    2. setup() icinde SD baslat:     initDevTools(tft);
+//    2. setup() icinde USB baslat:    initDevTools(tft);
 //       (SPI.begin sonrasi, tft.init ONCE)
 //    3. loop() sonunda HUD ciz:       drawDevHUD(canvas);
 //    4. Screenshot: pushSprite ONCESI checkScreenshot(canvas);
-//    5. USB GIF/Video: checkScreenshot() NON-BLOCKING'dir (async, Core 0).
-//       Seri konsoldan 'g' = 60 kare GIF/video, 's' = tek shot, 'k' = keyframe talebi.
-//       Oyun 60 FPS akmaya devam ederken arka planda USB dump (async, Core 0).
-//       30 FPS: tam 160x128 kare, downscale YOK. Bunun yerine SATIR BAZLI DELTA
-//       sikistirma: sadece onceki kareye gore degisen satirlar gonderilir.
+//    5. USB: 's' = screenshot, 'g' = continuous capture, 'x' = stop, 'k' = FULL.
+//       Screenshot submission does not wait. GIF submission waits up to 2 seconds
+//       for a free buffer; a transfer failure stops capture, not the game.
+//       Capture has a 20 ms minimum interval (at most 50 FPS); actual FPS depends
+//       on USB throughput and game rendering. Games continue to use real millis().
+//       SATIR BAZLI DELTA: sadece degisen satirlar gonderilir.
 //       Kalite korunur, bant genisligi ihtiyaci duser.
 //       USB modu: HWCDC (JTAG) stabil ~254 KB/s. USBCDC (USB-OTG/TinyUSB) modunda
-//       _writeUSB() chunking ile CDC TX FIFO (64B) tikanmaz — IDE: USB-OTG + CDC On Boot.
+//       A header and its pixels are written as one packet; short writes abort
+//       the session. The USB driver's bounded TX timeout keeps failure finite.
 //
 //  Renk modlari (oyuna gore set edin -- Python otomatik algilar):
 //    setScreenshotMode(SCR_BGR_SWAP);   // RGB() makrosu (wireframe3d, galacticstrike, platformer)
@@ -30,16 +32,16 @@
 //  suffix'i + WxH'i + delta modunu otomatik okuyup cozer.
 //  Eski firmware (FRAME:BGR_SWAP\n, mod field yok) -> Python FULL varsayar (geri uyum).
 //
-//  NOT: Screenshot sonrasi oyun donabilir (SPI mutex sorunu).
-//       Screenshot SD kartta kalici. Manuel reset atin.
+//  SD screenshot writes are removed; capture does not use the shared SPI bus.
 // ============================================================
 
 // Pin guard — oyun kendi pinlerini tanimladiysa tekrar include etme
 #ifndef TFT_CS
-  #include "../hardware_config.h"
+  #include "hardware_config.h"
 #endif
 
 #include <SPI.h>
+#include <TFT_eSPI.h>
 #include <esp_heap_caps.h>
 
 // --- FreeRTOS (Async USB Frame Dumper) ---
@@ -85,7 +87,7 @@ inline void updateFPS() {
     _fps_count++;
     uint32_t now = millis();
     if (now - _fps_lastMs >= 1000) {
-        _fps_value = _fps_count;
+        _fps_value = (uint32_t)_fps_count * 1000 / (now - _fps_lastMs);
         _fps_count = 0;
         _fps_lastMs = now;
     }
@@ -130,8 +132,8 @@ inline void initDevTools(TFT_eSPI &tft, bool init_sd = true);
 //    [Main loop Core 1]  memcpy(full frame) -> free buffer -> filled queue (0 block)
 //    [Dump task  Core 0] filled queue -> DELTA/FULL encode -> Serial.write -> free buffer
 //
-//  Akis kontrolu: 2 buffer (ping-pong). USB yetisemezse free buffer
-//  bulunamaz -> submit false doner -> o kare drop edilir, oyun DURMAZ.
+//  Akis kontrolu: screenshot free-buffer beklemez; GIF en fazla 2 saniye bekler.
+//  Aktarim hatasinda kayit durur. Yeni 'g' veya 's' yeni bir FULL oturumu acar.
 //
 //  SATIR BAZLI DELTA FRAME SIKISTIRMASI (Line-based Delta Compression):
 //  ----------------------------------------------------------------
@@ -143,7 +145,7 @@ inline void initDevTools(TFT_eSPI &tft, bool init_sd = true);
 //    Tam kare (keyframe): 40960 byte               -> ~6 FPS
 //    Delta (degisen satirlar): 2 + N*(2 + 320) byte
 //      N=0   (statik ekran)  -> 2 byte             -> 30+ FPS
-//      N=32  (%25 degisim)   -> 10242 byte         -> ~30 FPS @ 254 KB/s
+//      N=32  (%25 degisim)   -> 10306 byte         -> ~25 FPS @ 254 KB/s
 //      N=128 (tum ekran)     -> 41218 byte         -> delta FULL'den buyuk -> FULL
 //
 //  Kalite KORUNUR (downscale YOK): her piksel 160x128 tam cozunurlukte,
@@ -174,24 +176,25 @@ public:
     static constexpr int    CAP_W = 160, CAP_H = 128;
     static constexpr size_t FB_SIZE   = CAP_W * CAP_H * 2;   // 40960 byte
     static constexpr size_t ROW_BYTES = CAP_W * 2;           // 320 byte/satir
+    static constexpr size_t HEADER_BYTES = 40;              // space before pixels
     static constexpr int    KEYFRAME_INTERVAL = 60;          // her 60 gif karede FULL
 
-    void begin() {
-        if (_running) return;
+    bool begin() {
+        if (_running.load()) return true;
         _freeQ   = xQueueCreate(2, sizeof(uint8_t*));
         _filledQ = xQueueCreate(2, sizeof(DumpJob));
-        if (!_freeQ || !_filledQ) return;
+        if (!_freeQ || !_filledQ) { _releaseInitResources(); return false; }
 
         for (int i = 0; i < 2; i++) {
             // Once internal SRAM (yazma hizli), yetersizse PSRAM
-            _buf[i] = (uint8_t*)heap_caps_malloc(FB_SIZE,
+            _buf[i] = (uint8_t*)heap_caps_malloc(FB_SIZE + HEADER_BYTES,
                           MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
             if (!_buf[i]) {
-                _buf[i] = (uint8_t*)heap_caps_malloc(FB_SIZE,
+                _buf[i] = (uint8_t*)heap_caps_malloc(FB_SIZE + HEADER_BYTES,
                               MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
             }
-            if (!_buf[i]) return;
-            uint8_t* p = _buf[i];
+            if (!_buf[i]) { _releaseInitResources(); return false; }
+            uint8_t* p = _buf[i] + HEADER_BYTES;
             xQueueSend(_freeQ, &p, portMAX_DELAY);
         }
         // Delta encoder buffer'lari (PSRAM oncelikli — sadece Core 0 erisir,
@@ -209,35 +212,43 @@ public:
                             MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
         _prevValid     = false;
         _gifFrameCount = 0;
+        _workerEpoch = 1;
+        _captureEpoch.store(1);
         _forceKey.store(false);
+        _failedEpoch.store(0);
         _dropped = 0;
-        _running = true;
         // Core 0, dusuk oncelik (1) -> WiFi/BT ve oyun (Core 1) etkilenmez
-        xTaskCreatePinnedToCore(_taskEntry, "fbDump", 4096, this, 1, &_task, 0);
+        if (xTaskCreatePinnedToCore(_taskEntry, "fbDump", 4096, this, 1, &_task, 0) != pdPASS) {
+            _releaseInitResources();
+            return false;
+        }
+        _running.store(true);
+        return true;
     }
 
     // Main loop'tan cagrilir.
     //   blocking=false (default): timeout 0 -> HIC bloklamaz. USB yetisemezse
     //     kare drop edilir (oyun devam eder). Screenshot (tek kare) icin ideal.
-    //   blocking=true : portMAX_DELAY -> free buffer bosalana kadar BEKLER.
-    //     HICBIR kare drop edilmez. Oyun USB hizina yavaslar (kayit aninda
-    //     kasma normaldir). GIF/video kaydi icin -> eksiksiz pürüzsüz video.
-    //     Delta sayesinde: statik ekran ~60 FPS, hareketli ~6 FPS (USB tavanı).
+    //   blocking=true : waits at most 2 seconds; false signals a capture failure.
     // true = kare kuyruklandi (gidecek)
-    // false = (yalnizca non-blocking) USB yetisemedi, kare drop edildi
+    // false = invalid source, unavailable worker, transfer failure or timeout
     bool submit(const uint8_t* src, bool isGif, bool blocking = false) {
-        if (!_running) return false;
+        if (!src || !_running.load() || failed()) return false;
+        const uint32_t epoch = _captureEpoch.load();
         uint8_t* dst;
-        // Free buffer'i al: blocking modda sonsuz bekle, degilse timeout 0
-        TickType_t wait = blocking ? portMAX_DELAY : 0;
+        TickType_t wait = blocking ? pdMS_TO_TICKS(2000) : 0;
         if (xQueueReceive(_freeQ, &dst, wait) != pdPASS) {
             _dropped++;
             return false;  // Akis kontrolu: bu kare atilir (non-blocking)
         }
+        if (failed() || epoch != _captureEpoch.load()) {
+            xQueueSend(_freeQ, &dst, 0);
+            return false;
+        }
         // TEK main-loop maliyeti: tam kare kopyasi (40960B memcpy, ~0.5ms PSRAM'den).
         // Delta karsilastirma Core 0'da yapilir (oyun Core 1'i bloklamaz).
         memcpy(dst, src, FB_SIZE);
-        DumpJob job = { dst, isGif };
+        DumpJob job = { dst, isGif, epoch };
         // filledQ'yu da blocking modda bekle (teori: free varsa filled de vardir)
         if (xQueueSend(_filledQ, &job, wait) != pdPASS) {
             // (Teorik olmamali) buffer'i geri koy
@@ -253,11 +264,43 @@ public:
     void requestKeyframe() { _forceKey.store(true); }
 
     inline uint32_t dropped() const { return _dropped; }
-    inline bool     running() const { return _running; }
-    inline void     resetGifCount()  { _gifFrameCount = 0; }
+    inline bool     running() const { return _running.load(); }
+    inline bool     failed() const  { return _failedEpoch.load() == _captureEpoch.load(); }
+    // Only the worker changes its frame counter/cache. Old queued jobs are skipped.
+    inline void resetGifCount() {
+        _captureEpoch.fetch_add(1);
+        if (_captureEpoch.load() == 0) _captureEpoch.fetch_add(1);
+    }
 
 private:
-    struct DumpJob { uint8_t* buf; bool isGif; };
+    struct DumpJob { uint8_t* buf; bool isGif; uint32_t epoch; };
+
+    void _releaseInitResources() {
+        for (int i = 0; i < 2; i++) {
+            if (_buf[i]) heap_caps_free(_buf[i]);
+            _buf[i] = nullptr;
+        }
+        if (_prevFrame) heap_caps_free(_prevFrame);
+        if (_deltaBuf) heap_caps_free(_deltaBuf);
+        _prevFrame = nullptr;
+        _deltaBuf = nullptr;
+        if (_freeQ) vQueueDelete(_freeQ);
+        if (_filledQ) vQueueDelete(_filledQ);
+        _freeQ = nullptr;
+        _filledQ = nullptr;
+        _task = nullptr;
+        _running.store(false);
+    }
+
+    // One Serial.write holds the USB driver's TX lock for header AND pixels.
+    // Other tasks' debug messages cannot interleave with a successful packet.
+    // A short write is a failed session, never a new delta reference.
+    bool _writeAll(const uint8_t* data, size_t size) {
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+        if (!Serial) return false;
+#endif
+        return Serial.write(data, size) == size;
+    }
 
     static void _taskEntry(void* arg) { static_cast<FrameDumper*>(arg)->_run(); }
 
@@ -270,6 +313,15 @@ private:
         for (;;) {
             if (xQueueReceive(_filledQ, &job, portMAX_DELAY) != pdPASS) continue;
             if (job.buf == nullptr) break;  // stop sinyali
+            if (job.epoch != _captureEpoch.load() || failed()) {
+                xQueueSend(_freeQ, &job.buf, portMAX_DELAY);
+                continue;
+            }
+            if (job.epoch != _workerEpoch) {
+                _workerEpoch = job.epoch;
+                _prevValid = false;
+                _gifFrameCount = 0;
+            }
 
             const bool isGif = job.isGif;
 
@@ -311,16 +363,17 @@ private:
             sprintf(suffix, ":%dx%d:%s", CAP_W, CAP_H, fullFrame ? "FULL" : "DELTA");
             strcat(hdr, suffix);
             strcat(hdr, "\n");
-            Serial.write(hdr, (size_t)strlen(hdr));
+            const size_t headerLen = strlen(hdr);
+            uint8_t* packet;
+            size_t payloadSize;
 
             // --- Payload ---
             if (fullFrame) {
                 // Tam kare: FB_SIZE byte
-                //   HWCDC: setTxBufferSize(2*FB_SIZE) -> tek write guvenli (TX ring buffer).
-                Serial.write(job.buf, FB_SIZE);
-                if (_prevFrame) { memcpy(_prevFrame, job.buf, FB_SIZE); _prevValid = true; }
+                packet = job.buf - headerLen;
+                payloadSize = FB_SIZE;
             } else {
-                size_t pos = 0;
+                size_t pos = HEADER_BYTES;
                 _deltaBuf[pos++] = (uint8_t)(nChanged & 0xFF);
                 _deltaBuf[pos++] = (uint8_t)((nChanged >> 8) & 0xFF);
                 for (int i = 0; i < nChanged; i++) {
@@ -330,11 +383,19 @@ private:
                     memcpy(_deltaBuf + pos, job.buf + (size_t)y * ROW_BYTES, ROW_BYTES);
                     pos += ROW_BYTES;
                 }
-                Serial.write(_deltaBuf, pos);
-                if (_prevFrame) { memcpy(_prevFrame, job.buf, FB_SIZE); _prevValid = true; }
+                payloadSize = pos - HEADER_BYTES;
+                packet = _deltaBuf + HEADER_BYTES - headerLen;
             }
+            memcpy(packet, hdr, headerLen);
+            bool sent = _writeAll(packet, headerLen + payloadSize);
 
-            if (isGif) _gifFrameCount++;
+            if (sent) {
+                if (_prevFrame) { memcpy(_prevFrame, job.buf, FB_SIZE); _prevValid = true; }
+                if (isGif) _gifFrameCount++;
+            } else {
+                _prevValid = false;
+                _failedEpoch.store(job.epoch);
+            }
 
             // Buffer'i havuza iade et
             uint8_t* p = job.buf;
@@ -349,7 +410,10 @@ private:
     uint8_t*           _buf[2]        = { nullptr, nullptr };
     uint8_t*           _prevFrame     = nullptr;   // delta karsilastirma (PSRAM, FB_SIZE)
     uint8_t*           _deltaBuf      = nullptr;   // delta payload olusturma (PSRAM)
-    volatile bool      _running       = false;
+    std::atomic<bool>  _running { false };
+    std::atomic<uint32_t> _failedEpoch { 0 };
+    std::atomic<uint32_t> _captureEpoch { 1 };
+    uint32_t          _workerEpoch = 1;
     bool               _prevValid     = false;     // _prevFrame gecerli mi (ilk kare -> keyframe)
     uint32_t           _gifFrameCount = 0;         // periyodik keyframe sayaci (sadece gif)
     std::atomic<bool>  _forceKey { false };        // Python 'k' keyframe talebi (Core1->Core0)
@@ -357,12 +421,17 @@ private:
 };
 
 // Global tekil ornek — initDevTools() icinde baslatilir.
-// `static`: dev_tools.h tek TU'da include edilse bile diger static global'larla
-// ayni pattern (internal linkage -> multi-TU include'ta linker hatasi olmaz).
+// Inline state is shared across translation units.
 inline FrameDumper FrameDump;
 
 inline void startFrameDumper() {
-    FrameDump.begin();
+#if !defined(ARDUINO_USB_CDC_ON_BOOT) || !ARDUINO_USB_CDC_ON_BOOT || ARDUINO_USB_MODE
+    if (!FrameDump.running()) Serial.setTxBufferSize(4096);
+#endif
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+    Serial.setTxTimeoutMs(250);
+#endif
+    if (!FrameDump.begin()) log_e("Frame dumper initialization failed");
 }
 
 
@@ -371,33 +440,28 @@ inline bool _gif_recording = false;
 
 // Artik ASYNC: main loop'u bloklamaz. Core 0'daki FrameDump task'i gonderir.
 // true = kare kuyruklandi, false = USB yetismedi (drop, oyun devam eder)
-//   is_gif=true  (video kaydi): BLOCKING -> hic kare drop edilmez, oyun yavaslar
+//   is_gif=true  (video kaydi): bounded wait -> oyun USB hizina yavaslayabilir
 //   is_gif=false (screenshot) : non-blocking -> drop toleransli, oyun durmaz
 inline bool _dumpFrameUSB(uint16_t *buf, int w, int h, bool is_gif) {
-    (void)w; (void)h;  // Sabit 160x128 (FrameDumper::FB_SIZE)
+    if (!buf || w != FrameDumper::CAP_W || h != FrameDumper::CAP_H) return false;
     return FrameDump.submit((uint8_t*)buf, is_gif, /*blocking=*/is_gif);
 }
 
-// Sahte Zaman (Fake Millis) Sistemi: Kayıt sırasında zaman 33ms (30FPS) atlar
-inline uint32_t _fake_ms = 0;
-inline bool _is_recording = false;
-
+// Compatibility helper: recording uses the same real clock as the games.
 inline uint32_t getDevMillis() {
-    if (_is_recording) {
-        return _fake_ms;
-    }
-    _fake_ms = millis();
-    return _fake_ms;
+    return millis();
 }
 
 inline void _handleSerialCommands(uint16_t *buf, int w, int h) {
     if (Serial.available() > 0) {
         char c = Serial.read();
         if (c == 's') {
+            if (FrameDump.failed()) FrameDump.resetGifCount();
             _dumpFrameUSB(buf, w, h, false);
         } else if (c == 'g') {
             // Sürekli kayıt başlat (idempotent: zaten kayıtta ise tekrar başlatma)
-            if (!_gif_recording) {
+            if (!_gif_recording && buf && w == FrameDumper::CAP_W &&
+                h == FrameDumper::CAP_H && FrameDump.running()) {
                 _gif_recording = true;
                 FrameDump.resetGifCount(); // keyframe interval sayacı sıfırla
             }
@@ -409,31 +473,29 @@ inline void _handleSerialCommands(uint16_t *buf, int w, int h) {
         }
     }
 
-    // GIF kaydi: BLOCKING submit -> her kare eksiksiz gider (drop YOK).
-    // 50 FPS throttle: USB transfer hizindan bagimsiz sabit oyun hizi.
-    // delay() ile her kare TAM 20ms surer -> oyun tutarli calisir, GIF 50 FPS (20ms delay) oynar.
+    // A stalled/failed transfer stops recording. The game loop stays usable.
     if (_gif_recording) {
-        _is_recording = true;
         uint32_t _frameStart = millis();
-        _dumpFrameUSB(buf, w, h, true); // blocking, drop yok
+        if (!_dumpFrameUSB(buf, w, h, true)) {
+            _gif_recording = false;
+            return;
+        }
         // 50 FPS throttle: USB hizliysa (kucuk delta) kalan sureyi bekle
         uint32_t _frameElapsed = millis() - _frameStart;
         if (_frameElapsed < 20) {
             delay(20 - _frameElapsed);
         }
-        _fake_ms += 20;
-    } else {
-        _is_recording = false;
     }
 }
 
-// BTN_D screenshot kontrolu — pushSprite ONCESI cagir
+// USB command polling — pushSprite ONCESI cagir
 inline bool checkScreenshot(TFT_eSprite &spr) {
-    _handleSerialCommands((uint16_t*)spr.getPointer(), spr.width(), spr.height());
+    uint16_t* buf = spr.getColorDepth() == 16 ? (uint16_t*)spr.getPointer() : nullptr;
+    _handleSerialCommands(buf, spr.width(), spr.height());
     return false; 
 }
 
-// BTN_D screenshot kontrolu — framebuffer icin (doom)
+// USB command polling — 16-bit framebuffer icin (doom)
 inline bool checkScreenshotFB(uint16_t *buf, int w, int h) {
     _handleSerialCommands(buf, w, h);
     return false; 
@@ -443,12 +505,6 @@ inline void initDevTools(TFT_eSPI &tft, bool init_sd) {
     (void)tft; (void)init_sd; // imza korundu (13 oyun çağırıyor); SD artık kullanılmıyor
     Serial.println("[DEV] initDevTools basliyor...");
 
-#if !defined(ARDUINO_USB_CDC_ON_BOOT) || !ARDUINO_USB_CDC_ON_BOOT || ARDUINO_USB_MODE
-    Serial.setTxBufferSize(FrameDumper::FB_SIZE * 2 + 256);
-#endif
-#if EOS_USBCDC
-    Serial.setTxTimeoutMs(1000);
-#endif
     Serial.begin(115200);
 
     // Paylaşılan SPI bus'ta SD_CS floating kalmasın diye deselect (HIGH) tutulur.
@@ -457,7 +513,7 @@ inline void initDevTools(TFT_eSPI &tft, bool init_sd) {
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
 
-    FrameDump.begin();
+    startFrameDumper();
     Serial.println("[DEV] initDevTools tamamlandi.");
     Serial.flush();
 }

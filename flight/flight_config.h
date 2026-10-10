@@ -11,20 +11,30 @@
 //    U8g2
 //
 //  OPENSKY API RATE LIMIT:
-//    - Anonymous: 100 requests/day
-//    - Registered (Free): 4000 requests/day
+//    - Anonymous: 400 credits/day
+//    - Registered (Free): 4000 credits/day
+//    - This fixed bbox costs 3 credits/request (264 square degrees).
 //    Register here: https://opensky-network.org/index.php?option=com_users&view=registration
 //
 //  HOW TO RUN:
 //    1. Fill in your WiFi credentials below.
-//    2. Fill in your OpenSky username/password if you registered.
+//    2. Fill in your OpenSky API client ID/secret if you registered.
 //    3. Copy the map files (regional.bin, world.bin) to your SD Card.
 //    4. Compile and upload to your ESP32-S3!
 // ============================================================
 
+// Private WiFi/OpenSky values can be defined in ignored flight_secrets.h.
+#if __has_include("flight_secrets.h")
+#include "flight_secrets.h"
+#endif
+
 // ─── WiFi Configuration ───
-#define WIFI_SSID       "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+#ifndef WIFI_SSID
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#endif
 
 #define WIFI_TIMEOUT_MS 15000
 #define WIFI_RETRY_MS   5000
@@ -35,16 +45,21 @@
 #define OPENSKY_PORT     443
 #define OPENSKY_PATH     "/api/states/all"
 // We use HTTPS (port 443) — SSL is required
-// OpenSky Account (4000 credits/day) — Basic Auth
-// clientId = username, clientSecret = password
-#define OPENSKY_USER     "YOUR_OPENSKY_USERNAME" // (leave empty if not registered)
-#define OPENSKY_PASS     "YOUR_OPENSKY_PASSWORD"
+// OpenSky Account -> API Client (OAuth2; website username/password do not work).
+// Leave both empty for anonymous requests with a smaller daily allowance.
+#ifndef OPENSKY_CLIENT_ID
+#define OPENSKY_CLIENT_ID ""
+#endif
+#ifndef OPENSKY_CLIENT_SECRET
+#define OPENSKY_CLIENT_SECRET ""
+#endif
+#define OPENSKY_TOKEN_URL "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 
 // ─── Polling Interval ───
 // How often to fetch data from OpenSky (ms)
-// Registered (4000 credits/day): 120 sec = 720/day (very safe)
-// OpenSky also has hourly limits (~400/hour), 120 sec = 30/hour is safe
-#define POLL_INTERVAL_MS 120000    // 2 minutes — safe limit
+// Registered: 120 sec = 720 requests/day = 2160 credits/day for this bbox.
+// Anonymous: 12 minutes = 120 requests/day = 360 credits/day.
+#define POLL_INTERVAL_MS ((OPENSKY_CLIENT_ID[0] && OPENSKY_CLIENT_SECRET[0]) ? 120000UL : 720000UL)
 // Map rendering interval (ms) — keeps joystick panning smooth
 // 50ms is aggressive → 100ms (10 FPS) is enough since flight data changes slowly
 #define RENDER_INTERVAL_MS 100
@@ -70,6 +85,12 @@
 // ─── Screen Dimensions ───
 #define SCR_W 160
 #define SCR_H 128
+
+// RGB565 map files: exact dimensions expected by the renderer.
+#define REG_MAP_W 2560
+#define REG_MAP_H 1280
+#define WORLD_MAP_W 512
+#define WORLD_MAP_H 256
 
 // ─── Hardware Pins ───
 // (Comes from hardware_config.h)

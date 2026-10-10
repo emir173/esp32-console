@@ -28,23 +28,26 @@ inline void updateMovement(float dt) {
     if (abs(jy) < 300) jy = 0;
 
     if (jx) {
-        float rs = (jx / 2000.0f) * 2.5f * dt, s = rs, c = 1.0f - rs * rs * 0.5f, odx = dirX;
+        float rs = (jx / 2000.0f) * 2.5f * dt, s = sinf(rs), c = cosf(rs), odx = dirX;
         dirX = dirX * c - dirY * s;
         dirY = odx * s + dirY * c;
-        float opx = planeX;
-        planeX = planeX * c - planeY * s;
-        planeY = opx * s + planeY * c;
+        // Float yuvarlaması uzun dönüşlerde kamera ölçeğini biriktirmesin.
+        float invLength = 1.0f / sqrtf(dirX * dirX + dirY * dirY);
+        dirX *= invLength;
+        dirY *= invLength;
+        planeX = -dirY * 0.66f;
+        planeY = dirX * 0.66f;
     }
 
     if (jy) {
         float mv = (-jy / 2000.0f) * (lastShieldState ? 1.5f : 3.0f) * dt;
         float moveX = dirX * mv;
         float moveY = dirY * mv;
-        float marginX = (moveX > 0) ? 0.2f : -0.2f;
-        float marginY = (moveY > 0) ? 0.2f : -0.2f;
+        float marginX = (moveX > 0) ? 0.2f : (moveX < 0 ? -0.2f : 0.0f);
+        float marginY = (moveY > 0) ? 0.2f : (moveY < 0 ? -0.2f : 0.0f);
 
-        if (MAP[(int)py][(int)(px + moveX + marginX)] == 0) px += moveX;
-        if (MAP[(int)(py + moveY + marginY)][(int)px] == 0) py += moveY;
+        if (isWalkable(px + moveX + marginX, py)) px += moveX;
+        if (isWalkable(px, py + moveY + marginY)) py += moveY;
     }
 }
 
@@ -106,8 +109,7 @@ inline void handleUseAction(uint32_t now, float dt) {
         int hedefID = -1;
 
         for (int i = 0; i < NUM_SPRITES; i++) {
-            if (sprites[i].state >= 1 && isMonsterType(sprites[i].type) &&
-                sprites[i].animState != ANIM_DEAD) {
+            if (isAliveTarget(sprites[i]) && isMonsterType(sprites[i].type)) {
                 float dx = sprites[i].x - px, dy = sprites[i].y - py, dist = sqrt(dx * dx + dy * dy);
                 if (dist < 0.001f) continue;
                 float ang = atan2(dy, dx) - atan2(dirY, dirX);
@@ -170,9 +172,8 @@ inline void handleShooting(uint32_t now) {
         playSound(NOTE_E4, 50);
         fireT = now;
         for (int i = 0; i < NUM_SPRITES; i++) {
-            if (sprites[i].state >= 1 &&
-                (isMonsterType(sprites[i].type) || sprites[i].type == ST_BARREL) &&
-                sprites[i].animState != ANIM_DEAD) {
+            if (isAliveTarget(sprites[i]) &&
+                (isMonsterType(sprites[i].type) || sprites[i].type == ST_BARREL)) {
                 float dx = sprites[i].x - px, dy = sprites[i].y - py, dist = sqrt(dx * dx + dy * dy);
                 if (dist < 0.001f) continue;
                 float ang = atan2(dy, dx) - atan2(dirY, dirX);
@@ -208,9 +209,8 @@ inline void handleShooting(uint32_t now) {
         fireT = now;
         int hits = 0;
         for (int i = 0; i < NUM_SPRITES; i++) {
-            if (sprites[i].state >= 1 &&
-                (isMonsterType(sprites[i].type) || sprites[i].type == ST_BARREL) &&
-                sprites[i].animState != ANIM_DEAD) {
+            if (isAliveTarget(sprites[i]) &&
+                (isMonsterType(sprites[i].type) || sprites[i].type == ST_BARREL)) {
                 float dx = sprites[i].x - px, dy = sprites[i].y - py, dist = sqrt(dx * dx + dy * dy);
                 if (dist < 0.001f) continue;
                 float ang = atan2(dy, dx) - atan2(dirY, dirX);

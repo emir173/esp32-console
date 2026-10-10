@@ -7,7 +7,9 @@
 //  Kontroller:
 //    JOY_X/Y -> Kamera / Nisan alma
 //    BTN_A   -> Ates
-//    BTN_B   -> OS Menu
+//    JOY_SW  -> Pause / Continue
+//    BTN_B   -> Game Menu (title: OS Menu)
+//    BTN_C   -> OS Menu (pause / game over)
 //    Buzzer  -> Ses efektleri
 // ============================================================
 
@@ -23,6 +25,7 @@
 #include "Config.h"
 #include "Math3D.h"
 #include "Renderer.h"
+#include "Input.h"
 
 // ============ Ekran Nesneleri ============
 TFT_eSPI tft = TFT_eSPI();
@@ -35,10 +38,6 @@ bool showFps = false;
 
 void playSound(uint16_t freq, uint32_t dur) {
     osPlaySound(freq, dur, soundEnabled);
-}
-
-void returnToOS() {
-    osReturnToOS(tft, soundEnabled);
 }
 
 // ============ Oyun Durumu ============
@@ -67,19 +66,20 @@ bool dustInit = false;
 uint32_t lastFrameMs = 0;
 uint32_t stateTimer = 0;
 int joyCenterX = 2048, joyCenterY = 2048;
+WireframeButton buttonA, buttonB, buttonC, buttonJoy;
 
 // ============ Dalga Yükselme Fanfari (Non-Blocking) ============
 struct WaveFanfare {
     bool active = false;
     uint8_t idx = 0;
-    unsigned long nextMs = 0;
+    uint32_t nextMs = 0;
 
     void start() { active = true; idx = 0; nextMs = millis(); }
 
     void update() {
         if (!active) return;
-        unsigned long now = millis();
-        if (now < nextMs) return;
+        uint32_t now = millis();
+        if ((int32_t)(now - nextMs) < 0) return;
         switch (idx) {
             case 0: playSound(NOTE_C5, 50); nextMs = now + 60; break;
             case 1: playSound(NOTE_E5, 50); nextMs = now + 60; break;
@@ -89,6 +89,33 @@ struct WaveFanfare {
     }
 };
 WaveFanfare waveFanfare;
+
+void saveBestIfRecord() {
+    if (score > highScore) {
+        highScore = score;
+        osSaveHighScore("hs_wireframe3d", highScore);
+    }
+}
+
+void enterGameMenu() {
+    saveBestIfRecord();
+    waveFanfare.active = false;
+    state = ST_TITLE;
+}
+
+void returnToOS() {
+    saveBestIfRecord();
+    waveFanfare.active = false;
+    osReturnToOS(tft, soundEnabled);
+}
+
+void finishGame() {
+    hp = 0;
+    saveBestIfRecord();
+    waveFanfare.active = false;
+    stateTimer = millis();
+    state = ST_GAMEOVER;
+}
 
 // ============================================================
 //  BASLANGIC FONKSIYONLARI
@@ -144,6 +171,7 @@ void spawnObject() {
         o.pos.x = sinf(hAngle) * cosf(vAngle) * dist;
         o.pos.y = sinf(vAngle) * dist * 0.5f;
         o.pos.z = cosf(hAngle) * cosf(vAngle) * dist;
+        o.prevPos = o.pos;
 
         Vec3 target = {0, 0, 0};
         target.x += random(-8, 8);
@@ -184,6 +212,8 @@ void resetGame() {
     shootCD = 0;
     camYaw = 0;
     camPitch = 0;
+    waveFanfare.active = false;
+    dustInit = false;
     clearObjects();
     clearBullets();
     clearBooms();
@@ -197,23 +227,19 @@ void updateObjects(float dt) {
     for (int i = 0; i < MAX_OBJECTS; i++) {
         if (!objects[i].active) continue;
         Object3D &o = objects[i];
+        o.prevPos = o.pos;
         o.rotAngle += o.rotSpeed * dt;
         if (o.hitTimer > 0) { o.hitTimer -= dt; if (o.hitTimer < 0) o.hitTimer = 0; }
         o.pos = v3add(o.pos, v3mul(o.vel, dt));
 
-        float dist = v3len(o.pos);
-        if (dist < COLLIDE_DIST) {
+        if (v3segmentDist2(o.prevPos, o.pos) < COLLIDE_DIST * COLLIDE_DIST) {
             o.active = false;
             hp--;
             spawnBoom(o.pos);
             playSound(NOTE_G3, 100);
             if (hp <= 0) {
-                stateTimer = millis();
-                if (score > highScore) {
-                    highScore = score;
-                    osSaveHighScore("hs_wireframe3d", highScore);
-                }
-                state = ST_GAMEOVER;
+                finishGame();
+                return;
             }
             continue;
         }
@@ -228,14 +254,18 @@ void updateBullets(float dt) {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!bullets[i].active) continue;
         Bullet3D &b = bullets[i];
-        b.pos = v3add(b.pos, v3mul(b.vel, dt));
-        b.life -= dt;
         if (b.life <= 0) { b.active = false; continue; }
+        Vec3 previous = b.pos;
+        float step = min(dt, b.life);
+        b.pos = v3add(b.pos, v3mul(b.vel, step));
+        b.life -= step;
 
         for (int j = 0; j < MAX_OBJECTS; j++) {
             if (!objects[j].active) continue;
-            Vec3 d = v3sub(b.pos, objects[j].pos);
-            float dist2 = v3dot(d, d);
+            Vec3 objectEnd = v3add(objects[j].prevPos,
+                v3mul(v3sub(objects[j].pos, objects[j].prevPos), dt > 0 ? step / dt : 0));
+            float dist2 = v3segmentDist2(v3sub(previous, objects[j].prevPos),
+                                        v3sub(b.pos, objectEnd));
             float hitR = objects[j].scale * 2.0f;
 
             if (dist2 < hitR * hitR) {
@@ -257,10 +287,17 @@ void updateBullets(float dt) {
                 break;
             }
         }
+        if (b.life <= 0) b.active = false;
     }
 }
 
 void updateSpawning(float dt) {
+    // Evaluate every frame: several kills may skip an exact multiple of ten.
+    int nextWave = kills / 10;
+    if (nextWave > wave) {
+        wave = nextWave;
+        waveFanfare.start();
+    }
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
         int activeCount = 0;
@@ -273,11 +310,6 @@ void updateSpawning(float dt) {
         }
 
         spawnTimer = max(SPAWN_BASE_INT - wave * SPAWN_WAVE_DEC, SPAWN_MIN_INT);
-
-        if (kills > 0 && kills % 10 == 0 && kills / 10 > wave) {
-            wave = kills / 10;
-            waveFanfare.start();
-        }
     }
 }
 
@@ -355,7 +387,13 @@ void setup() {
 
     // 10) Sprite tamponu (double buffering)
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    if (!canvas.createSprite(SCR_W, SCR_H)) {
+        Serial.println("[WIRE3D] Sprite allocation failed");
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.setCursor(8, 50); tft.print("Not enough memory");
+        tft.setCursor(8, 65); tft.print("[B] OS Menu");
+        return;
+    }
 
     // 11) Joystick kalibrasyon
     bool warn = false;
@@ -379,6 +417,10 @@ void setup() {
     initStars();
     state = ST_TITLE;
     lastFrameMs = millis();
+    buttonA.reset(digitalRead(BTN_A), lastFrameMs);
+    buttonB.reset(digitalRead(BTN_B), lastFrameMs);
+    buttonC.reset(digitalRead(BTN_C), lastFrameMs);
+    buttonJoy.reset(digitalRead(JOY_SW), lastFrameMs);
 }
 
 // ============================================================
@@ -386,48 +428,44 @@ void setup() {
 // ============================================================
 
 void loop() {
-    // ---- Delta-time hesabi ----
+    if (!canvas.getPointer()) {
+        if (!digitalRead(BTN_B)) returnToOS();
+        delay(20);
+        return;
+    }
+
+    devToolsTick();
     uint32_t now = millis();
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
+
+    // Poll buttons between frames; keep short presses pending.
+    if (now - lastFrameMs < FRAME_MS) {
+        delay(1);
+        return;
+    }
+
+    // ---- Delta-time hesabi ----
     float dt = (now - lastFrameMs) / 1000.0f;
     if (dt > 0.05f) dt = 0.05f;
     lastFrameMs = now;
 
-    // Screenshot sonrasi TFT recovery
-    devToolsTick();
-
     // ---- Non-blocking wave fanfare ----
-    waveFanfare.update();
+    if (state == ST_PLAY) waveFanfare.update();
 
-    // ---- JOY_SW: Pause toggle (kenar tespiti) ----
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == ST_PLAY) {
-            state = ST_PAUSE;
-            playSound(NOTE_G4, 50);
-        } else if (state == ST_PAUSE) {
-            state = ST_PLAY;
-            playSound(NOTE_D5, 40);
-        }
-    }
-    prevJoySw = currJoySw;
-
-    // ---- BTN_C: OS menuye don (menu ekranlarinda) ----
-    if (!digitalRead(BTN_B)) {
-        if (state == ST_TITLE) {
-            returnToOS();
-        }
-    }
-
-    // ---- BTN_A kenar tespiti ----
-    bool btnA = !digitalRead(BTN_A);
-    static bool prevA = false;
-    bool pressA = (btnA && !prevA);
-    prevA = btnA;
+    bool btnA = buttonA.stable == LOW;
+    bool pressA = buttonA.takePress();
+    bool pressB = buttonB.takePress();
+    bool pressC = buttonC.takePress();
+    bool pressJoy = buttonJoy.takePress();
 
     // ---- Joystick okumasi (merkez cikart + deadzone) ----
     float jx = (analogRead(JOY_X) - joyCenterX) / 2048.0f;
     float jy = (analogRead(JOY_Y) - joyCenterY) / 2048.0f;
+    jx = constrain(jx, -1.0f, 1.0f);
+    jy = constrain(jy, -1.0f, 1.0f);
     if (fabsf(jx) < 0.15f) jx = 0;
     if (fabsf(jy) < 0.15f) jy = 0;
 
@@ -446,11 +484,19 @@ void loop() {
                 state = ST_PLAY;
                 playSound(NOTE_E5, 50);
             }
+            else if (pressB) {
+                returnToOS();
+            }
             break;
 
         // ---- Oyun ----
         case ST_PLAY:
         {
+            if (pressJoy) {
+                state = ST_PAUSE;
+                playSound(NOTE_G4, 50);
+                break;
+            }
             // Kamera kontrolu
             camYaw += jx * CAM_YAW_SPEED * dt;
             camPitch -= jy * CAM_PITCH_SPEED * dt;
@@ -458,8 +504,7 @@ void loop() {
 
             // Ates
             if (shootCD > 0) { shootCD -= dt; if (shootCD < 0) shootCD = 0; }
-            if (btnA && shootCD <= 0) {
-                shootCD = SHOOT_CD;
+            if ((btnA || pressA) && shootCD <= 0) {
                 Vec3 dir = {0, 0, 1};
                 dir = rotateX(dir, camPitch);
                 dir = rotateY(dir, camYaw);
@@ -469,14 +514,22 @@ void loop() {
                         bullets[i].vel = v3mul(dir, BULLET_SPEED);
                         bullets[i].life = BULLET_LIFETIME;
                         bullets[i].active = true;
+                        shootCD = SHOOT_CD;
+                        playSound(NOTE_A4 + random(-15, 15), 25);
                         break;
                     }
                 }
-                if (bullets[0].active) playSound(NOTE_A4 + random(-15, 15), 25);
             }
 
             // Guncellemeler
             updateObjects(dt);
+            if (state == ST_GAMEOVER) {
+                drawGameOver(canvas, stars, MAX_STARS, camYaw, camPitch,
+                             score, kills, wave, highScore);
+                checkScreenshot(canvas);
+                canvas.pushSprite(0, 0);
+                break;
+            }
             updateBullets(dt);
             updateSpawning(dt);
             updateBooms(dt);
@@ -513,16 +566,15 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
             if (pressA && now - stateTimer > 600) {
-                state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+                resetGame();
+                state = ST_PLAY;
                 playSound(NOTE_D5, 50);
             }
-            if (!digitalRead(BTN_B) && now - stateTimer > 600) {
-                state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+            else if (pressB && now - stateTimer > 600) {
+                enterGameMenu();
                 playSound(NOTE_G4, 50);
             }
-            if (!digitalRead(BTN_C) && now - stateTimer > 600) {
+            else if (pressC && now - stateTimer > 600) {
                 returnToOS();
             }
             break;
@@ -546,16 +598,15 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
-            if (pressA) {
+            if (pressA || pressJoy) {
                 state = ST_PLAY;
                 playSound(NOTE_D5, 40);
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 playSound(NOTE_G4, 50);
-                state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C)) {
+            else if (pressC) {
                 playSound(NOTE_G4, 50);
                 returnToOS();
             }

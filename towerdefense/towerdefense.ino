@@ -199,6 +199,8 @@ void startNewGameAt(int level) {
     startedFromL1 = (level == 1);       // Rekor dürüstlüğü
     curX = 8; curY = 8;
     heldDir = -1;
+    heldNav = 0;
+    fanfare.active = false;
     gameTickAcc = 0;
     state = PLAYING;
     lastFrameMs = millis();
@@ -215,6 +217,9 @@ void startNextLevel() {
     clearEnemies();
     clearEffects();        // Sadece görsel efektler (istatistikler korunur)
     curX = 8; curY = 8;
+    heldDir = -1;
+    heldNav = 0;
+    gameTickAcc = 0;
     prepLeft = WAVE_PREP_S;
     state = PLAYING;
     lastFrameMs = millis();
@@ -247,12 +252,14 @@ void tryOpenTowerMenu() {
     if (canBuildTower(curX, curY)) {
         playSound(NOTE_G4, SND_NAV_MS);   // Panel açma onayı
         tmCursor = 0;
+        heldNav = 0;
         state = TOWER_MENU;
         return;
     }
     if (towerIndexAt(curX, curY) >= 0) {
         playSound(NOTE_G4, SND_NAV_MS);   // Kule bilgi paneli
         tiCursor = 0;
+        heldNav = 0;
         state = TOWER_INFO;
         return;
     }
@@ -458,8 +465,7 @@ void loop() {
 
         // ---------------- OYUN ----------------
         case PLAYING: {
-            // Pause geçişi: SADECE joystick tuşu (JOY_SW). B oyun sırasında
-            // hiçbir şey yapmaz (yanlışlıkla duraklatma/OS'a düşme koruması).
+            // Pause geçişi: SADECE joystick tuşu (JOY_SW). B = yıldırım.
             if (swP) {
                 playSound(NOTE_G4, SND_PAUSE_MS);
                 state = PAUSE;
@@ -505,8 +511,8 @@ void loop() {
                 gameTickAcc -= FRAME_SEC;
                 tickWaveSpawns();
                 tickEnemies();
-                tickTowers();
                 if (baseDestroyed) break;
+                tickTowers();
             }
 
             // Efekt güncellemeleri

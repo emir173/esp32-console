@@ -13,14 +13,13 @@
 //  Kontroller:
 //    JOY_X  -> Cubugu saga / sola hareket ettir
 //    BTN_A  -> Topu firlat / Menu onay
-//    BTN_B  -> OS Launcher'a Don
+//    BTN_B  -> Oyun menusu (ana menudeyken OS Launcher)
+//    BTN_C  -> Pause / Game Over ekranindan OS Launcher'a Don
 //    JOY_SW -> Pause
 // ============================================================
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <U8g2lib.h>
-U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #include <Preferences.h>
 #include "../hardware_config.h"
 #include "../dev_tools.h"
@@ -30,6 +29,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #include "Ball.h"
 #include "Bricks.h"
 #include "Renderer.h"
+#include "Input.h"
 
 // ============ Oyun Nesneleri ============
 TFT_eSPI tft = TFT_eSPI();
@@ -61,7 +61,7 @@ uint32_t fpsStartTime = 0;
 int currentFPS = 0;
 
 // ============ Buton & Ayarlar ============
-int prevBtnA = HIGH;
+ArkanoidButton buttonA, buttonB, buttonC, buttonJoy;
 int joyCenterX = 0;
 bool soundEnabled = true;
 bool showFps = false;
@@ -71,8 +71,31 @@ void playSound(uint16_t freq, uint32_t dur) {
     osPlaySound(freq, dur, soundEnabled);
 }
 
+void saveBestScore() {
+    if (score > highScore) {
+        highScore = score;
+        osSaveHighScore("hs_arkanoid", highScore);
+    }
+}
+
 void returnToOS() {
+    saveBestScore();
     osReturnToOS(tft, soundEnabled);
+}
+
+void enterGameMenu() {
+    saveBestScore();
+    resetGame();
+    state = MENU;
+}
+
+// A shifted sprite leaves strips of the previous frame exposed at the edges.
+void presentShakenFrame() {
+    if (shake.offsetX > 0) tft.fillRect(0, 0, shake.offsetX, SCR_H, COL_BG);
+    if (shake.offsetX < 0) tft.fillRect(SCR_W + shake.offsetX, 0, -shake.offsetX, SCR_H, COL_BG);
+    if (shake.offsetY > 0) tft.fillRect(0, 0, SCR_W, shake.offsetY, COL_BG);
+    if (shake.offsetY < 0) tft.fillRect(0, SCR_H + shake.offsetY, SCR_W, -shake.offsetY, COL_BG);
+    canvas.pushSprite(shake.offsetX, shake.offsetY);
 }
 
 // ============ Topu Sifirla (Cubuga Yapistir) ============
@@ -183,25 +206,22 @@ void setup() {
     state = MENU;
     lastFrameMs = millis();
     fpsStartTime = millis();
+    buttonA.reset(digitalRead(BTN_A), lastFrameMs);
+    buttonB.reset(digitalRead(BTN_B), lastFrameMs);
+    buttonC.reset(digitalRead(BTN_C), lastFrameMs);
+    buttonJoy.reset(digitalRead(JOY_SW), lastFrameMs);
 }
 
 // ============================================================
 //  LOOP
 // ============================================================
 void loop() {
-    // ---- JOY_SW: Pause toggle ----
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == PLAYING) {
-            state = PAUSE;
-            playSound(NOTE_G4, 50);
-        }
-    }
-    prevJoySw = currJoySw;
-
     // ---- Delta-Time (FPS60) ----
     unsigned long now = millis();
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
     unsigned long delta = now - lastFrameMs;
     if (delta < FRAME_MS) {
         yield();   // FreeRTOS nefesi (delay() yok)
@@ -211,10 +231,15 @@ void loop() {
     if (dt > MAX_DT) dt = MAX_DT;   // Lag spike korumasi
     lastFrameMs = now;
 
-    // ---- BTN_A: Kenar tespiti ----
-    int btnA = digitalRead(BTN_A);
-    bool pressA = (btnA == LOW && prevBtnA == HIGH);
-    prevBtnA = btnA;
+    bool pressA = buttonA.takePress();
+    bool pressB = buttonB.takePress();
+    bool pressC = buttonC.takePress();
+    bool pressJoy = buttonJoy.takePress();
+    if (pressJoy && state == PLAYING) {
+        state = PAUSE;
+        pressA = false;  // A simultaneous press must not immediately resume.
+        playSound(NOTE_G4, 50);
+    }
 
     // ---- FPS Hesaplama ----
     fpsFrameCount++;
@@ -236,12 +261,11 @@ void loop() {
             drawMenu(canvas, highScore);
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
-            if (pressA) {
+            if (pressB) {
+                returnToOS();
+            } else if (pressA) {
                 playSound(NOTE_E5, 50);
                 resetGame();
-            }
-            if (!digitalRead(BTN_B)) {
-                returnToOS();
             }
             break;
 
@@ -249,10 +273,8 @@ void loop() {
         //  OYUN
         // --------------------------------------------------
         case PLAYING: {
-            // === Cubuk Guncelle ===
-            paddle.update(dt);
-
             if (ball.isStuck()) {
+                paddle.update(dt);
                 // Top cubuga yapisik
                 ball.stickTo(paddle.getX());
                 if (pressA) {
@@ -260,80 +282,92 @@ void loop() {
                     playSound(NOTE_C5, 40);
                 }
             } else {
-                // === Top Guncelle (hareket + duvar carpismasi) ===
-                int wallFlags = ball.update(dt);
+                // At most one pixel of travel per step, including during lag spikes.
+                int steps = (int)ceilf(ball.getSpeed() * dt);
+                if (steps < 1) steps = 1;
+                float stepDt = dt / (float)steps;
+                for (int step = 0; step < steps; step++) {
+                    paddle.update(stepDt);
+                    // === Top Guncelle (hareket + duvar carpismasi) ===
+                    int wallFlags = ball.update(stepDt);
 
-                if (wallFlags < 0) {
-                    // --- Top altta dustu, can kaybi ---
-                    lives--;
-                    playSound(NOTE_G3, 100);
-                    delay(80);
-                    playSound(NOTE_E3, 120);
-                    shake.trigger(4.0f);
+                    if (wallFlags < 0) {
+                        // --- Top altta dustu, can kaybi ---
+                        lives--;
+                        playSound(NOTE_G3, 100);
+                        delay(80);
+                        playSound(NOTE_E3, 120);
+                        shake.trigger(4.0f);
 
-                    if (lives <= 0) {
-                        state = GAMEOVER;
-                        newRecord = (score > highScore);
-                        if (newRecord) highScore = score;
-                        gameOverMs = now;
-                        osSaveHighScore("hs_arkanoid", highScore);
-                        break;
-                    } else {
-                        ballLostMs = now;
-                        state = BALL_LOST;
-                        break;
+                        if (lives <= 0) {
+                            state = GAMEOVER;
+                            newRecord = (score > highScore);
+                            if (newRecord) highScore = score;
+                            gameOverMs = now;
+                            osSaveHighScore("hs_arkanoid", highScore);
+                            break;
+                        } else {
+                            ballLostMs = now;
+                            state = BALL_LOST;
+                            break;
+                        }
                     }
-                }
 
-                // Duvar carpma sesi
-                if (wallFlags & 1) playSound(NOTE_G4, 20);
+                    // Duvar carpma sesi
+                    if (wallFlags & 3) playSound(NOTE_G4, 20);
 
-                // === Raket Carpisma ===
-                if (ball.handlePaddleCollision(paddle.getX())) {
-                    playSound(NOTE_A4, 25);
-                    shake.trigger(0.5f);
-                }
+                    // === Raket Carpisma ===
+                    if (ball.handlePaddleCollision(paddle.getX())) {
+                        playSound(NOTE_A4, 25);
+                        shake.trigger(0.5f);
+                    }
 
-                // === Tugla Carpisma ===
-                int hitRow, hitCol;
-                bool bounceX, bounceY;
-                if (bricks.checkHit(ball.getX(), ball.getY(),
-                                    ball.getPrevX(), ball.getPrevY(),
-                                    (float)BALL_R,
-                                    hitRow, hitCol, bounceX, bounceY)) {
+                    // === Tugla Carpisma ===
+                    int hitRow, hitCol;
+                    bool bounceX, bounceY;
+                    if (bricks.checkHit(ball.getX(), ball.getY(),
+                                        ball.getPrevX(), ball.getPrevY(),
+                                        (float)BALL_R,
+                                        hitRow, hitCol, bounceX, bounceY)) {
 
-                    // Sekme yonu
-                    if (bounceX) ball.bounceX();
-                    if (bounceY) ball.bounceY();
+                        // Sekme yonu
+                        ball.restorePreviousPosition();
+                        if (bounceX) ball.bounceX();
+                        if (bounceY) ball.bounceY();
 
-                    // Tuglayi kir
-                    int pts = bricks.breakAt(hitRow, hitCol);
-                    score += pts;
+                        // Tuglayi kir
+                        int pts = bricks.breakAt(hitRow, hitCol);
+                        score += pts;
 
-                    // Parcacik patlamasi (tuglanin kendi renginde)
-                    int bx = bricks.getBrickX(hitCol) + BRICK_W / 2;
-                    int by = bricks.getBrickY(hitRow) + BRICK_H / 2;
-                    particles.emit((float)bx, (float)by, BRICK_COLORS[hitRow], 8);
+                        // Parcacik patlamasi (tuglanin kendi renginde)
+                        int bx = bricks.getBrickX(hitCol) + BRICK_W / 2;
+                        int by = bricks.getBrickY(hitRow) + BRICK_H / 2;
+                        particles.emit((float)bx, (float)by, BRICK_COLORS[hitRow], 8);
 
-                    // Ses efekti (ust satirlar daha parlak)
-                    playSound(BRICK_HIT_FREQ[hitRow], 35);
+                        // Ses efekti (ust satirlar daha parlak)
+                        playSound(BRICK_HIT_FREQ[hitRow], 35);
 
-                    // Ekran titremesi
-                    shake.trigger(1.5f);
+                        // Ekran titremesi
+                        shake.trigger(1.5f);
 
-                    // Tum tuglalar kirildi mi?
-                    if (bricks.isEmpty()) {
-                        state = LEVEL_CLEAR;
-                        levelClearMs = now;
-                        playSound(NOTE_C5, 50);
-                        delay(60);
-                        playSound(NOTE_E5, 50);
-                        delay(60);
-                        playSound(NOTE_G5, 40);
-                        break;
+                        // Tum tuglalar kirildi mi?
+                        if (bricks.isEmpty()) {
+                            state = LEVEL_CLEAR;
+                            levelClearMs = now;
+                            playSound(NOTE_C5, 50);
+                            delay(60);
+                            playSound(NOTE_E5, 50);
+                            delay(60);
+                            playSound(NOTE_G5, 40);
+                            break;
+                        }
                     }
                 }
             }
+
+            if (state != PLAYING) break;
+            // Keep the trail sampled once per frame, independent of physics steps.
+            if (!ball.isStuck()) ball.pushTrail();
 
             // === Parcacik ve Titreme Guncelle ===
             particles.update(dt);
@@ -359,7 +393,7 @@ void loop() {
             }
 
             checkScreenshot(canvas);
-            canvas.pushSprite(shake.offsetX, shake.offsetY);
+            presentShakenFrame();
             break;
         }
 
@@ -376,7 +410,7 @@ void loop() {
             ball.draw(canvas);
             drawHUD(canvas, score, wave, lives, currentFPS, showFps);
             checkScreenshot(canvas);
-            canvas.pushSprite(shake.offsetX, shake.offsetY);
+            presentShakenFrame();
             if (now - ballLostMs > 250) {
                 resetBall();
                 state = PLAYING;
@@ -407,14 +441,10 @@ void loop() {
             if (pressA && now - gameOverMs > 600) {
                 playSound(NOTE_D5, 50);
                 resetGame();
-            }
-            if (!digitalRead(BTN_B) && now - gameOverMs > 600) {
+            } else if (pressB && now - gameOverMs > 600) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
-            }
-            if (!digitalRead(BTN_C) && now - gameOverMs > 600) {
+                enterGameMenu();
+            } else if (pressC && now - gameOverMs > 600) {
                 returnToOS();
             }
             break;
@@ -436,19 +466,14 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
-            if (!digitalRead(BTN_A)) {
+            if (pressA) {
                 playSound(NOTE_D5, 40);
                 state = PLAYING;
                 lastFrameMs = millis();
-            }
-            if (!digitalRead(BTN_B)) {
+            } else if (pressB) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
-            }
-            if (!digitalRead(BTN_C)) {
-                playSound(NOTE_G4, 50);
+                enterGameMenu();
+            } else if (pressC) {
                 returnToOS();
             }
             break;

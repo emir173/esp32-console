@@ -10,6 +10,7 @@
 #include <SD.h>
 #include <U8g2lib.h>
 #include <math.h>
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <Update.h>
@@ -46,13 +47,6 @@ constexpr int MH        = 32;
 // ════════════════════════════════════════════════════════════
 constexpr int NUM_SPRITES   = 140;
 constexpr int MAX_PROJECTILES = NUM_SPRITES;
-
-// ════════════════════════════════════════════════════════════
-//  SNAKE MİNİ OYUN
-// ════════════════════════════════════════════════════════════
-constexpr int SNAKE_W       = 32;
-constexpr int SNAKE_H       = 26;
-constexpr int SNAKE_MAX     = 200;
 
 // ════════════════════════════════════════════════════════════
 //  ZAMANLAMA
@@ -112,20 +106,14 @@ constexpr uint16_t COL_ARMOR_VAL   = COL_RGB(255, 255, 255);
 constexpr uint16_t COL_FPS_VAL     = COL_RGB(100, 100, 100);
 constexpr uint16_t COL_GREEN_ITEM  = COL_RGB(0, 150, 0);
 constexpr uint16_t COL_FIREBALL    = COL_RGB(255, 255, 0);
-constexpr uint16_t COL_SNAKE_BG    = COL_RGB(10, 10, 10);
-constexpr uint16_t COL_SNAKE_HLINE = COL_RGB(0, 150, 0);
-constexpr uint16_t COL_SNAKE_FOOD  = COL_RGB(255, 60, 0);
-constexpr uint16_t COL_SNAKE_HEAD  = COL_RGB(0, 255, 80);
 constexpr uint16_t COL_MENU_TITLE  = COL_RGB(255, 80, 0);
-constexpr uint16_t COL_MENU_SNAKE  = COL_RGB(0, 255, 80);
-constexpr uint16_t COL_MENU_SYS    = COL_RGB(80, 180, 255);
 constexpr uint16_t COL_GAMEOVER    = COL_RGB(255, 0, 0);
 constexpr uint16_t COL_DARKGRAY    = COL_RGB(40, 40, 40);
 constexpr uint16_t COL_NEARBLACK   = COL_RGB(8, 8, 8);
 
-// --- RGB565 sabitleri (TFT_eSPI metin/cizim icin — BGR framebuffer disinda) ---
+// --- Metin ve framebuffer aynı BGR565 sırasını kullanır ---
 constexpr uint16_t COL_WHITE       = 0xFFFF;   // Beyaz (TFT metin)
-constexpr uint16_t COL_HP_LOW      = 0xF800;   // Kirmizi (dusuk HP metin, RGB565)
+constexpr uint16_t COL_HP_LOW      = COL_RGB(255, 0, 0); // Kırmızı (düşük HP metni)
 constexpr uint16_t COL_DARKEN_MASK = 0x7BEF;   // Renk karartma bitmask'i (duvar karanligi)
 constexpr uint16_t COL_CHROMA      = 0x0000;   // Chroma-key (seffaflik anahtari)
 
@@ -169,11 +157,8 @@ enum SpriteType : uint8_t {
 // ════════════════════════════════════════════════════════════
 enum GameState {
     STATE_BOOT,
-    STATE_MASTER_MENU,
     STATE_MENU,
     STATE_PLAYING,
-    STATE_SNAKE,
-    STATE_BOOTLOADER,
     STATE_PAUSE
 };
 
@@ -191,8 +176,6 @@ struct Sprite {
     uint32_t animTimer;
     uint32_t lastFireTime;
 };
-
-struct SnakeCell { int8_t x, y; };
 
 // ════════════════════════════════════════════════════════════
 //  DÜŞMAN ANİMASYON KARE TABLOLARI
@@ -360,28 +343,14 @@ extern bool lastInfState;
 
 extern bool soundEnabled;
 
-extern volatile GameState gameState;
+extern std::atomic<GameState> gameState;
 
-extern bool titleDrawn;
-extern uint32_t bootStartTime;
 extern uint16_t *titlePicBuf;
-
-extern int masterMenuSel;
-extern bool masterMenuDrawn;
 
 extern int menuSelection;
 extern int levelSelectIdx;
 extern bool inLevelSelect;
 extern bool menuDrawn;
-
-extern SnakeCell snakeBody[SNAKE_MAX];
-extern int snakeLen;
-extern int8_t snakeDirX, snakeDirY;
-extern int8_t snakeFoodX, snakeFoodY;
-extern uint32_t snakeLastMove;
-extern int snakeScore;
-extern bool snakeDead;
-extern bool snakeDrawn;
 
 extern int weaponType;
 
@@ -406,6 +375,14 @@ inline bool isMonsterType(int t) { return t == ST_ZOMBIE || t == ST_BARON || t =
 inline bool isItemType(int t)    { return t == ST_AMMO || t == ST_HEALTH || t == ST_KEY || t == ST_ARMOR; }
 inline bool isDecorType(int t)   { return t == ST_LAMP || t == ST_PILLAR || t == ST_CORPSE ||
                                           t == ST_CBRA || t == ST_SKULLS; }
+
+inline bool isAliveTarget(const Sprite &s) {
+    return s.state > 0 && s.hp > 0 && s.animState != ANIM_DYING && s.animState != ANIM_DEAD;
+}
+
+inline bool isWalkable(float x, float y) {
+    return x >= 0 && x < MW && y >= 0 && y < MH && MAP[(int)y][(int)x] == 0;
+}
 
 //  doorAnimT — hücre animasyonlu bir kapıysa açılma oranını (0..1),
 //  değilse -1 döndürür. renderWalls ve handleUseAction kullanır.
@@ -433,6 +410,7 @@ inline bool checkLOS(float x0, float y0, float dx, float dy, float dist) {
 // ════════════════════════════════════════════════════════════
 void playSound(uint16_t freq, uint32_t dur);
 void returnToOS();
+void setGameState(GameState state);
 
 void startDoorAnim(int x, int y);
 
@@ -451,14 +429,6 @@ int countLevelItemsLeft();
 
 void drawStaticHUD();
 bool loadTitlePic(uint8_t* fileBuf);
-
-void drawMasterMenu(bool fullRedraw);
-void drawIconDoom(int x, int y, bool sel);
-void drawIconSnake(int x, int y, bool sel);
-
-void snakeReset();
-void snakeDraw();
-void snakeUpdate(uint32_t now);
 
 // Renderer.h fonksiyonları
 void renderWalls(uint16_t* activeFB, int pitch);

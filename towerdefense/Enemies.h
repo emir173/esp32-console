@@ -27,13 +27,18 @@ struct Enemy {
     float speed;            // tile/sn (dalga ölçekli)
     int reward;             // Öldürünce verilen para
     uint16_t color;
-    uint32_t slowUntil;     // Frost yavaşlatma bitiş zamanı (millis)
-    uint32_t poisonUntil;   // Zehir etkisi bitiş zamanı (millis)
-    uint32_t nextPoisonMs;  // Bir sonraki zehir tik zamanı (millis)
-    uint32_t nextHealMs;    // Şifacı: bir sonraki iyileştirme zamanı (millis)
+    uint64_t slowUntil;     // Bitiş zamanları: yalnız oyun tick'leriyle ilerler
+    uint64_t poisonUntil;
+    uint64_t nextPoisonMs;
+    uint64_t nextHealMs;
 };
 
 Enemy enemies[MAX_ENEMIES];
+
+// Duvar saati yerine sabit tick saati: pause/kule panelleri ve lag
+// etkilerin süresini tüketmez. 64 bit, millis() taşmasından da bağımsızdır.
+uint64_t enemyTicks = 0;
+inline uint64_t enemyMillis() { return enemyTicks * 1000ULL / TARGET_FPS; }
 
 // Combat.h içinde tanımlanır (ileri bildirimler)
 void baseReached(Enemy &e);       // Düşman kaleye ulaştığında hasar akışı
@@ -75,6 +80,7 @@ inline float pathProgressOf(const Enemy &e) {
 // ------------------------------------------------------------
 inline void clearEnemies() {
     for (int i = 0; i < MAX_ENEMIES; i++) enemies[i].alive = false;
+    enemyTicks = 0;
 }
 
 // ------------------------------------------------------------
@@ -109,7 +115,7 @@ inline bool spawnEnemy(EnemyType type, int waveNum, int level) {
         e.slowUntil    = 0;
         e.poisonUntil  = 0;
         e.nextPoisonMs = 0;
-        e.nextHealMs   = (type == ENEMY_HEALER) ? millis() + HEAL_INTERVAL_MS : 0;
+        e.nextHealMs   = (type == ENEMY_HEALER) ? enemyMillis() + HEAL_INTERVAL_MS : 0;
         switch (type) {
             case ENEMY_RUNNER:  e.color = COL_ENEMY_RUNNER;  break;
             case ENEMY_TANK:    e.color = COL_ENEMY_TANK;    break;
@@ -132,7 +138,8 @@ inline bool spawnEnemy(EnemyType type, int waveNum, int level) {
 //  towerdefense.ino'da). Zehir tikleri de burada işlenir.
 // ------------------------------------------------------------
 inline void tickEnemies() {
-    uint32_t now = millis();
+    enemyTicks++;
+    uint64_t now = enemyMillis();
     for (int i = 0; i < MAX_ENEMIES; i++) {
         Enemy &e = enemies[i];
         if (!e.alive) continue;
@@ -174,6 +181,7 @@ inline void tickEnemies() {
             float d = sqrtf(dx * dx + dy * dy);
             if (step >= d) {
                 baseReached(e);
+                if (baseHp <= 0) return;
             } else {
                 e.x += dx / d * step;
                 e.y += dy / d * step;
@@ -184,6 +192,7 @@ inline void tickEnemies() {
         // --- YÜRÜYEN: genişletilmiş yol üzerinde lineer ---
         if (e.pathIdx >= pathLen - 1) {
             baseReached(e);       // Son tile'a (kale) varıldı
+            if (baseHp <= 0) return;
             continue;
         }
 

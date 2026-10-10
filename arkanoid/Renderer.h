@@ -113,7 +113,7 @@ inline void drawHUD(TFT_eSprite& canvas, int score, int wave, int lives,
 
     // Dalga (orta)
     canvas.setTextColor(COL_HUD_TEXT);
-    canvas.setCursor(SCR_W / 2 - 8, 1);
+    canvas.setCursor(65, 1);
     canvas.print("W:");
     canvas.setTextColor(TFT_YELLOW);
     canvas.print(wave);
@@ -121,13 +121,13 @@ inline void drawHUD(TFT_eSprite& canvas, int score, int wave, int lives,
     // FPS (sag tarafa, canlardan once — 128 sinirini kullan)
     if (showFps) {
         char buf[12];
-        int len = snprintf(buf, sizeof(buf), "FPS:%d", fps);
+        int len = snprintf(buf, sizeof(buf), "F:%d", fps);
         int totalW = len * 6;
         int fpsX = 128 - totalW - 4;  // Canlar 128+ alani kaplar
 
         canvas.setTextColor(COL_HUD_TEXT);
         canvas.setCursor(fpsX, 1);
-        canvas.print("FPS:");
+        canvas.print("F:");
         canvas.setTextColor(TFT_GREEN);
         canvas.print(fps);
     }
@@ -192,7 +192,7 @@ inline void drawMenu(TFT_eSprite& canvas, int highScore) {
     char rekorBuf[20];
     snprintf(rekorBuf, sizeof(rekorBuf), "Best: %d", highScore);
     int txtW = strlen(rekorBuf) * 6;
-    canvas.setCursor((160 - txtW) / 2, 140);
+    canvas.setCursor((SCR_W - txtW) / 2, 79);
     canvas.print(rekorBuf);
 }
 

@@ -149,19 +149,22 @@ static void drawPolygon(const float *pts, int n, uint16_t color) {
 //  SD Card is UNTOUCHED during rendering (loaded at setup, SD.end()).
 // ══════════════════════════════════════════════════════════════
 void mapDrawBackground() {
-    #define REG_W 2560
-    #define REG_H 1280
+    #define REG_W REG_MAP_W
+    #define REG_H REG_MAP_H
     #define REG_LAT_MIN 25.0f
     #define REG_LAT_MAX 55.0f
     #define REG_LON_MIN 10.0f
     #define REG_LON_MAX 60.0f
-    #define WLD_W 512
-    #define WLD_H 256
+    #define WLD_W WORLD_MAP_W
+    #define WLD_H WORLD_MAP_H
 
     float ppd = pixelsPerDegree();
     uint16_t rowBuf[SCR_W];
 
     auto interpolate = [](const unsigned short* mapData, int mapW, int mapH, float fX, float fY) -> uint16_t {
+        // Clamp the sample, not just the index: edge pixels must not extrapolate.
+        fX = fmaxf(0.0f, fminf(fX, mapW - 1.0f));
+        fY = fmaxf(0.0f, fminf(fY, mapH - 1.0f));
         int x1 = (int)floorf(fX);
         int y1 = (int)floorf(fY);
         if (x1 < 0) x1 = 0; if (x1 >= mapW - 1) x1 = mapW - 2;

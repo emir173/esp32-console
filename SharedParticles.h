@@ -1,5 +1,6 @@
 #pragma once
 #include <TFT_eSPI.h>
+#include <cmath>
 
 struct Particle {
     float x, y, vx, vy;
@@ -10,7 +11,8 @@ struct Particle {
 
 template <int MAX_PART>
 struct SharedParticleSystem {
-    Particle particles[MAX_PART];
+    static_assert(MAX_PART > 0, "Particle pool must not be empty");
+    Particle particles[MAX_PART] = {};
 
     void clear() {
         for (int i = 0; i < MAX_PART; i++) {
@@ -19,6 +21,7 @@ struct SharedParticleSystem {
     }
 
     void update(float dt, float gravity = 0.0f, float maxY = 9999.0f) {
+        if (!std::isfinite(dt) || dt <= 0.0f) return;
         for (int i = 0; i < MAX_PART; i++) {
             if (!particles[i].active) continue;
             

@@ -18,14 +18,15 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include "flight_internal.h"
 
 // volatile: WiFi event callback runs in a different task, shared with main thread
-static volatile bool s_wifiConnected = false;
-static volatile bool s_wifiEventDisc = false;      // disconnect flag (from callback)
-static volatile bool s_wifiEventConnected = false; // connect flag (from callback)
+static std::atomic<bool> s_wifiConnected{false};
+static std::atomic<bool> s_wifiEventDisc{false};
+static std::atomic<bool> s_wifiEventConnected{false};
 static bool s_ntpRequested = false;
 static bool s_ntpSynced = false;
 static uint32_t s_lastReconnectAttempt = 0;
@@ -38,8 +39,7 @@ static bool s_buffersAllocated = false;
 
 static bool ensureBuffers() {
     if (s_buffersAllocated) return true;
-    // 32-bit aligned: memcpy uses word-aligned optimization
-    s_netBuf = (char*)heap_caps_malloc(500000, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+    s_netBuf = (char*)heap_caps_malloc(500000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_netBuf) {
         Serial.println("[NET] PSRAM buffer allocation FAILED!");
         return false;
@@ -74,12 +74,10 @@ void netBeginNTP() {
 
 // Process event flags — called in loop or during wait
 static void netProcessWifiFlags() {
-    if (s_wifiEventConnected) {
-        s_wifiEventConnected = false;
+    if (s_wifiEventConnected.exchange(false)) {
         s_wifiConnected = true;
     }
-    if (s_wifiEventDisc) {
-        s_wifiEventDisc = false;
+    if (s_wifiEventDisc.exchange(false)) {
         s_wifiConnected = false;
     }
 }
@@ -92,14 +90,14 @@ void netBeginWiFi() {
     if (s_wifiConnected && WiFi.status() == WL_CONNECTED) return;
 
     WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
     WiFi.setSleep(WIFI_PS_NONE);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
-    WiFi.disconnect(true, true);
+    WiFi.disconnect(false, false);
     delay(50);
     WiFi.setScanMethod(WIFI_FAST_SCAN);
     WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
     WiFi.setHostname("eos-flight");
-    WiFi.mode(WIFI_STA);
     WiFi.onEvent(wifiEvent);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     Serial.println("[NET] WiFi.begin() (background)");
@@ -173,12 +171,13 @@ void netGetTime(char *buf, int len) {
         return;
     }
     s_ntpSynced = true;
-    struct tm *t = localtime(&now);
-    snprintf(buf, len, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+    struct tm local;
+    localtime_r(&now, &local);
+    snprintf(buf, len, "%02d:%02d:%02d", local.tm_hour, local.tm_min, local.tm_sec);
 }
 
 bool netIsNTPSynced() {
-    return s_ntpSynced;
+    return time(nullptr) >= 1700000000;
 }
 
 bool netIsConnected() {
@@ -195,6 +194,7 @@ void netMaintain() {
 
     if (WiFi.status() == WL_CONNECTED) {
         if (!s_wifiConnected) s_wifiConnected = true;
+        netBeginNTP();
         return;
     }
     s_wifiConnected = false;
@@ -203,7 +203,7 @@ void netMaintain() {
     if (now - s_lastReconnectAttempt < WIFI_RETRY_MS) return;
     s_lastReconnectAttempt = now;
     
-    WiFi.disconnect(true, false);
+    WiFi.disconnect(false, false);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
@@ -218,322 +218,240 @@ void netMaintain() {
 //
 //  Return: true = success, false = error
 // ══════════════════════════════════════════════════════════════
-bool netFetchAircraft() {
-    if (!netIsConnected()) {
-        Serial.println("[NET] No WiFi, fetch skipped");
-        return false;
+// OpenSky token and rate-limit state belongs to the fetch task.
+static String s_accessToken;
+static uint32_t s_tokenIssuedMs = 0, s_tokenLifetimeMs = 0;
+static uint32_t s_retryStartedMs = 0, s_retryDelayMs = 0;
+static const char* RATE_HEADERS[] = {"X-Rate-Limit-Retry-After-Seconds", "Retry-After", "Transfer-Encoding"};
+
+class PsramJsonAllocator : public ArduinoJson::Allocator {
+public:
+    void* allocate(size_t size) override {
+        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
+    void deallocate(void* ptr) override { heap_caps_free(ptr); }
+    void* reallocate(void* ptr, size_t size) override {
+        return heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+};
+static PsramJsonAllocator s_jsonAllocator;
 
-    // ─── 1. Bbox — FIXED Turkey region (independent of viewport) ───
-    // Even if user zooms/pans, fetches same data — consistent aircraft count
-    float latMin = DATA_BBOX_LAT_MIN;
-    float latMax = DATA_BBOX_LAT_MAX;
-    float lonMin = DATA_BBOX_LON_MIN;
-    float lonMax = DATA_BBOX_LON_MAX;
+static void recordRateLimit(HTTPClient& http) {
+    String retry = http.header(RATE_HEADERS[0]);
+    if (retry.isEmpty()) retry = http.header(RATE_HEADERS[1]);
+    uint32_t seconds = strtoul(retry.c_str(), nullptr, 10);
+    if (!seconds) seconds = 300;
+    if (seconds > 86400) seconds = 86400;
+    s_retryStartedMs = millis();
+    s_retryDelayMs = seconds * 1000;
+    Serial.printf("[NET] HTTP 429: wait %u s before retry\n", (unsigned)seconds);
+}
 
-    // Build URL — bbox parameters
-    char path[256];
-    snprintf(path, sizeof(path),
-             "%s?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
-             OPENSKY_PATH, latMin, lonMin, latMax, lonMax);
+static String formEncode(const char* value) {
+    static const char hexDigits[] = "0123456789ABCDEF";
+    String encoded;
+    while (*value) {
+        uint8_t c = (uint8_t)*value++;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += (char)c;
+        } else {
+            encoded += '%'; encoded += hexDigits[c >> 4]; encoded += hexDigits[c & 15];
+        }
+    }
+    return encoded;
+}
 
-    Serial.print("[NET] OpenSky request: ");
-    Serial.println(path);
-
-    // ─── 2. HTTPS GET — WiFiClientSecure ───
+static bool ensureToken() {
+    if (!s_accessToken.isEmpty() && millis() - s_tokenIssuedMs < s_tokenLifetimeMs) return true;
+    s_accessToken = "";
     WiFiClientSecure client;
-    client.setInsecure();  // Cert validation off (no RTC)
-    client.setTimeout(15000);
-
+    client.setInsecure(); // Preserve the existing TLS policy.
     HTTPClient http;
     http.setTimeout(15000);
     http.setConnectTimeout(10000);
-
-    if (!http.begin(client, OPENSKY_HOST, OPENSKY_PORT, path)) {
-        Serial.println("[NET] http.begin FAILED");
-        return false;
-    }
-
-    // USE HTTP/1.0 — NO chunked encoding, Content-Length ALWAYS known!
-    // This removes the need for the 60-line chunked cleaner code.
-    http.useHTTP10(true);
-
-    // Basic Auth (if provided — for OpenSky accounts)
-    if (strlen(OPENSKY_USER) > 0) {
-        http.setAuthorization(OPENSKY_USER, OPENSKY_PASS);
-    }
-
-    int code = http.GET();
-    Serial.print("[NET] HTTP code: ");
-    Serial.println(code);
-
-    if (code == 429) {
-        Serial.println("[NET] 429 - Rate limit! Waiting 5 minutes...");
-        http.end();
-        delay(300000);
-        return false;
-    }
-
+    if (!http.begin(client, OPENSKY_TOKEN_URL)) return false;
+    http.collectHeaders(RATE_HEADERS, 3);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    String body = "grant_type=client_credentials&client_id=" + formEncode(OPENSKY_CLIENT_ID)
+                + "&client_secret=" + formEncode(OPENSKY_CLIENT_SECRET);
+    int code = http.POST(body);
     if (code != HTTP_CODE_OK) {
-        Serial.print("[NET] HTTP error: ");
-        Serial.println(http.errorToString(code));
+        if (code == 429) recordRateLimit(http);
+        Serial.printf("[NET] OAuth token request failed: %d\n", code);
         http.end();
         return false;
     }
-
-    // ─── 3. Fetch response into PSRAM buffer ───
-    if (!ensureBuffers()) {
-        Serial.println("[NET] No buffer, poll skipped");
-        http.end();
+    // HTTPClient handles chunking for the small token response.
+    String response = http.getString();
+    http.end();
+    JsonDocument doc(&s_jsonAllocator);
+    DeserializationError err = deserializeJson(doc, response);
+    const char* token = doc["access_token"] | "";
+    uint32_t seconds = doc["expires_in"] | 0U;
+    if (err || !token[0] || seconds <= 30) {
+        Serial.println("[NET] Invalid OAuth token response");
         return false;
     }
+    if (seconds > 86400) seconds = 86400;
+    s_accessToken = token;
+    s_tokenIssuedMs = millis();
+    s_tokenLifetimeMs = (seconds - 30) * 1000;
+    Serial.println("[NET] OAuth token ready"); // Never log credentials/token.
+    return true;
+}
 
-    // With HTTP/1.0 Content-Length is ALWAYS known (no chunked)
+// A pause in network delivery is not the end of the response.
+static bool readResponse(HTTPClient& http, size_t& totalRead) {
+    constexpr size_t BUF_SIZE = 500000;
     int contentLen = http.getSize();
-    Serial.print("[NET] Content-Length: ");
-    Serial.print(contentLen);
-    Serial.println(" bytes");
-
-    size_t bufSize = 500000;
-    char *buf = s_netBuf;
-
-    // Stream reading — via Content-Length OR idle timeout
-    // (HTTP/1.0 sometimes omits Content-Length, so idle timeout is needed)
-    WiFiClient *stream = http.getStreamPtr();
-    size_t totalRead = 0;
-    uint32_t totalTimeout = millis() + 10000;
-    uint32_t lastDataMs = millis();
-    uint32_t idleTimeout = 300;  // 300ms no data = transfer complete
-    while (totalRead < bufSize - 1 && millis() < totalTimeout) {
-        // If Content-Length is known, exit upon full read
-        if (contentLen > 0 && totalRead >= (size_t)contentLen) break;
-
-        size_t avail = stream->available();
-        if (avail == 0) {
-            // Data arrived but stopped → check idle timeout
-            if (totalRead > 0 && millis() - lastDataMs > idleTimeout) {
-                break;  // 300ms no new data → done
-            }
+    if (contentLen >= (int)BUF_SIZE || contentLen == 0 ||
+        !http.header("Transfer-Encoding").isEmpty()) {
+        Serial.println("[NET] Unsupported/oversized HTTP body");
+        return false;
+    }
+    NetworkClient* stream = http.getStreamPtr();
+    uint32_t started = millis(), lastData = started;
+    totalRead = 0;
+    while (millis() - started < 30000) {
+        if (contentLen >= 0 && totalRead == (size_t)contentLen) break;
+        size_t available = stream->available();
+        if (!available) {
+            if (!stream->connected()) break;
+            if (millis() - lastData >= 15000) break;
             delay(1);
             continue;
         }
-        lastDataMs = millis();
-        size_t toRead = avail;
-        if (toRead > bufSize - 1 - totalRead) toRead = bufSize - 1 - totalRead;
-        if (contentLen > 0 && totalRead + toRead > (size_t)contentLen) {
-            toRead = contentLen - totalRead;
+        if (totalRead == BUF_SIZE - 1) {
+            Serial.println("[NET] HTTP body exceeds buffer");
+            return false;
         }
-        size_t bytesRead = stream->readBytes((uint8_t*)(buf + totalRead), toRead);
-        totalRead += bytesRead;
-        if (bytesRead == 0) break;
+        size_t remaining = BUF_SIZE - 1 - totalRead;
+        if (contentLen >= 0 && remaining > (size_t)contentLen - totalRead)
+            remaining = (size_t)contentLen - totalRead;
+        if (available > remaining) available = remaining;
+        int got = stream->read((uint8_t*)s_netBuf + totalRead, available);
+        if (got > 0) { totalRead += got; lastData = millis(); }
+        else delay(1);
     }
-    buf[totalRead] = '\0';
-    http.end();
-
-    Serial.print("[NET] Total read: ");
-    Serial.print(totalRead);
-    Serial.print(" bytes, buf[0..40]: ");
-    if (totalRead > 40) {
-        char dbg[41];
-        memcpy(dbg, buf, 40);
-        dbg[40] = '\0';
-        Serial.println(dbg);
-    } else {
-        Serial.println(buf);
-    }
-
-    // ─── Chunked cleaner CODE REMOVED! ───
-    // With HTTP/1.0 there is no chunked encoding, JSON arrives directly.
-
-    // ─── 4. Manual JSON parser — No ArduinoJson, much less RAM ───
-    // OpenSky format: {"time":...,"states":[["icao","callsign","country",...,lon,lat,...],...]}
-    // We manually split and parse each states[i] array for each aircraft.
-    // Bypasses JsonDocument's internal RAM usage entirely.
-    Serial.println("[NET] Manual parser starting...");
-
-    static Aircraft s_tempAircraft[MAX_AIRCRAFT];
-    int count = 0;
-
-    // Find "states":[ section
-    char *statesStart = strstr(buf, "\"states\":[");
-    if (!statesStart) {
-        Serial.println("[NET] 'states' array not found");
-        // buf is static — do not free
+    s_netBuf[totalRead] = '\0';
+    bool complete = contentLen >= 0 ? totalRead == (size_t)contentLen
+                                   : !stream->connected() && !stream->available();
+    if (!complete || !totalRead) {
+        Serial.printf("[NET] Incomplete HTTP body: %u/%d bytes\n", (unsigned)totalRead, contentLen);
         return false;
     }
-    statesStart += 10;  // After "states":[
-
-    // Process each [[...] array sequentially
-    char *p = statesStart;
-    while (*p && count < MAX_AIRCRAFT) {
-        // Search for next [ — start of new aircraft
-        while (*p && *p != '[') p++;
-        if (*p != '[') break;
-        p++;  // After [
-
-        // Copy entire array (to temp buffer)
-        char *arrayEnd = strchr(p, ']');
-        if (!arrayEnd) break;
-        int arrayLen = arrayEnd - p;
-        if (arrayLen > 511) arrayLen = 511;  // safety cap
-
-        char arrBuf[512];
-        strncpy(arrBuf, p, arrayLen);
-        arrBuf[arrayLen] = '\0';
-        
-        p = arrayEnd + 1; // Move to next aircraft
-
-        // Parse array — comma separated values
-        // [0] icao24, [1] callsign, [2] country, [5] lon, [6] lat, [7] alt, [8] ground, [9] vel, [10] track
-        // Manual parse: split by comma, skip null values
-        char *tokStart = arrBuf;
-        int fieldIdx = 0;
-        Aircraft &a = s_tempAircraft[count];
-
-        // Init all string values empty
-        a.icao24[0] = '\0';
-        a.callsign[0] = '\0';
-        a.country[0] = '\0';
-        a.lat = 0; a.lon = 0; a.altitude = 0; a.velocity = 0; a.heading = 0;
-        a.on_ground = false;
-
-        bool skip = false;
-        while (tokStart && *tokStart && fieldIdx <= 10) {
-            // Next token start — " or number or null or true/false
-            while (*tokStart == ' ' || *tokStart == ',') tokStart++;
-            if (*tokStart == '\0') break;
-
-            char *tokEnd;
-            if (*tokStart == '"') {
-                // String value
-                tokStart++;
-                tokEnd = strchr(tokStart, '"');
-                if (!tokEnd) break;
-                int slen = tokEnd - tokStart;
-                if (slen < 0) slen = 0;
-                switch (fieldIdx) {
-                    case 0: { // icao24
-                        if (slen > 6) slen = 6;
-                        strncpy(a.icao24, tokStart, slen);
-                        a.icao24[slen] = '\0';
-                        break;
-                    }
-                    case 1: { // callsign — trim spaces
-                        int j = 0;
-                        for (int k = 0; k < slen && j < 9; k++) {
-                            if (tokStart[k] != ' ') a.callsign[j++] = tokStart[k];
-                        }
-                        a.callsign[j] = '\0';
-                        if (j == 0) strcpy(a.callsign, "----");
-                        break;
-                    }
-                    case 2: { // country
-                        if (slen > 15) slen = 15;
-                        strncpy(a.country, tokStart, slen);
-                        a.country[slen] = '\0';
-                        break;
-                    }
-                }
-                tokStart = tokEnd + 1;
-            } else {
-                // Number, null, true, false
-                tokEnd = strchr(tokStart, ',');
-                if (!tokEnd) tokEnd = strchr(tokStart, '\0');
-                int slen = tokEnd - tokStart;
-                char valBuf[32];
-                if (slen > 30) slen = 30;
-                strncpy(valBuf, tokStart, slen);
-                valBuf[slen] = '\0';
-
-                if (strncmp(valBuf, "null", 4) == 0) {
-                    // null — skip
-                } else if (strncmp(valBuf, "true", 4) == 0) {
-                    if (fieldIdx == 8) a.on_ground = true;
-                } else if (strncmp(valBuf, "false", 5) == 0) {
-                    if (fieldIdx == 8) a.on_ground = false;
-                } else {
-                    // Number
-                    float val = strtof(valBuf, nullptr);
-                    switch (fieldIdx) {
-                        case 5:  a.lon = val; break;
-                        case 6:  a.lat = val; break;
-                        case 7:  a.altitude = val; break;
-                        case 9:  a.velocity = val; break;
-                        case 10: a.heading = val; break;
-                    }
-                }
-                tokStart = tokEnd;
-            }
-            fieldIdx++;
-        }
-
-        // Does it have a position? (lat/lon cannot be null)
-        if (a.lat != 0 || a.lon != 0) {
-            a.on_screen = false;
-            a.last_update_ms = millis();  // Timestamp for interpolation
-            count++;
-        }
-
-        p = arrayEnd + 1;
-        // Skip next comma
-        while (*p && *p != ',' && *p != ']') p++;
-        if (*p == ',') p++;
-    }
-
-    // buf is static — do not free, reuse on next poll
-
-    if (g_aircraftMutex != NULL) {
-        if (xSemaphoreTake(g_aircraftMutex, portMAX_DELAY) == pdTRUE) {
-            // Save selected aircraft ICAO code
-            char selectedIcao[20] = {0};
-            if (g_selectedIdx >= 0 && g_selectedIdx < g_aircraftCount) {
-                strncpy(selectedIcao, g_aircraft[g_selectedIdx].icao24, 19);
-            }
-
-            // Copy new list
-            memcpy(g_aircraft, s_tempAircraft, count * sizeof(Aircraft));
-            g_aircraftCount = count;
-            g_dataValid = true;
-            g_lastUpdate_ms = millis();
-
-            // Find old aircraft in new list and update selection
-            int newSelectedIdx = -1;
-            if (selectedIcao[0] != '\0') {
-                for (int i = 0; i < count; i++) {
-                    if (strcmp(g_aircraft[i].icao24, selectedIcao) == 0) {
-                        newSelectedIdx = i;
-                        break;
-                    }
-                }
-            }
-            g_selectedIdx = newSelectedIdx;
-
-            xSemaphoreGive(g_aircraftMutex);
-        }
-    } else {
-        // Fallback (if no Mutex)
-        char selectedIcao[20] = {0};
-        if (g_selectedIdx >= 0 && g_selectedIdx < g_aircraftCount) {
-            strncpy(selectedIcao, g_aircraft[g_selectedIdx].icao24, 19);
-        }
-        memcpy(g_aircraft, s_tempAircraft, count * sizeof(Aircraft));
-        g_aircraftCount = count;
-        g_dataValid = true;
-        g_lastUpdate_ms = millis();
-        int newSelectedIdx = -1;
-        if (selectedIcao[0] != '\0') {
-            for (int i = 0; i < count; i++) {
-                if (strcmp(g_aircraft[i].icao24, selectedIcao) == 0) {
-                    newSelectedIdx = i;
-                    break;
-                }
-            }
-        }
-        g_selectedIdx = newSelectedIdx;
-    }
-
-    Serial.print("[NET] Manual parser: ");
-    Serial.print(count);
-    Serial.println(" aircraft received");
     return true;
+}
+
+static bool parseAircraft(size_t bodySize) {
+    JsonDocument filter;
+    // Preserve positional indices in each state vector; array filters use [0]
+    // as a template for every element, so a per-index field mask is unsafe.
+    filter["states"] = true;
+    JsonDocument doc(&s_jsonAllocator);
+    DeserializationError err = deserializeJson(doc, s_netBuf, bodySize,
+                                               DeserializationOption::Filter(filter));
+    if (err) {
+        Serial.printf("[NET] JSON rejected: %s\n", err.c_str());
+        return false;
+    }
+    JsonVariant states = doc["states"];
+    if (states.isUnbound() || (!states.isNull() && !states.is<JsonArray>())) {
+        Serial.println("[NET] Missing/invalid states array");
+        return false;
+    }
+    static Aircraft temp[MAX_AIRCRAFT];
+    int count = 0;
+    for (JsonVariant row : states.as<JsonArray>()) {
+        if (!row.is<JsonArray>() || row.size() < 11) {
+            Serial.println("[NET] Invalid state vector");
+            return false;
+        }
+        // A missing position is different from a valid zero coordinate.
+        if (row[5].isNull() || row[6].isNull()) continue;
+        if (!row[5].is<float>() || !row[6].is<float>()) return false;
+        float lon = row[5].as<float>(), lat = row[6].as<float>();
+        if (!isfinite(lon) || !isfinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) continue;
+        const char* icao = row[0] | "";
+        if (!icao[0]) continue;
+        if (count >= MAX_AIRCRAFT) continue;
+        Aircraft& a = temp[count++];
+        a = Aircraft{};
+        snprintf(a.icao24, sizeof(a.icao24), "%s", icao);
+        trimCallsign(a.callsign, row[1] | "", sizeof(a.callsign));
+        if (!a.callsign[0]) strcpy(a.callsign, "----");
+        snprintf(a.country, sizeof(a.country), "%s", row[2] | "");
+        a.lon = a.interp_lon = lon;
+        a.lat = a.interp_lat = lat;
+        a.altitude = row[7] | 0.0f;
+        a.on_ground = row[8] | false;
+        a.velocity = row[9] | 0.0f;
+        a.heading = row[10] | 0.0f;
+        a.last_update_ms = millis();
+    }
+    if (!g_aircraftMutex || xSemaphoreTake(g_aircraftMutex, portMAX_DELAY) != pdTRUE) return false;
+    char selectedIcao[8] = {};
+    if (g_selectedIdx >= 0 && g_selectedIdx < g_aircraftCount)
+        strcpy(selectedIcao, g_aircraft[g_selectedIdx].icao24);
+    memcpy(g_aircraft, temp, count * sizeof(Aircraft));
+    g_aircraftCount = count;
+    g_selectedIdx = -1;
+    for (int i = 0; i < count; i++) {
+        if (selectedIcao[0] && strcmp(g_aircraft[i].icao24, selectedIcao) == 0) {
+            g_selectedIdx = i;
+            break;
+        }
+    }
+    g_lastUpdate_ms = millis();
+    g_dataValid = true;
+    xSemaphoreGive(g_aircraftMutex);
+    Serial.printf("[NET] %d aircraft received | free PSRAM: %u\n", count, ESP.getFreePsram());
+    return true;
+}
+
+bool netFetchAircraft() {
+    if (!netIsConnected()) return false;
+    if (s_retryDelayMs && millis() - s_retryStartedMs < s_retryDelayMs) return false;
+    s_retryDelayMs = 0;
+    bool useAuth = OPENSKY_CLIENT_ID[0] && OPENSKY_CLIENT_SECRET[0];
+    if ((OPENSKY_CLIENT_ID[0] != 0) != (OPENSKY_CLIENT_SECRET[0] != 0)) {
+        Serial.println("[NET] Configure both OpenSky client ID and secret");
+        return false;
+    }
+    if (!ensureBuffers()) return false;
+    char path[256];
+    snprintf(path, sizeof(path), "%s?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
+             OPENSKY_PATH, DATA_BBOX_LAT_MIN, DATA_BBOX_LON_MIN, DATA_BBOX_LAT_MAX, DATA_BBOX_LON_MAX);
+    // Refresh once on 401, with a bounded retry.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (useAuth && !ensureToken()) return false;
+        WiFiClientSecure client;
+        client.setInsecure();
+        HTTPClient http;
+        http.setTimeout(15000);
+        http.setConnectTimeout(10000);
+        if (!http.begin(client, OPENSKY_HOST, OPENSKY_PORT, path, true)) return false;
+        http.useHTTP10(true);
+        http.collectHeaders(RATE_HEADERS, 3);
+        if (useAuth) http.addHeader("Authorization", "Bearer " + s_accessToken);
+        int code = http.GET();
+        Serial.printf("[NET] OpenSky HTTP: %d\n", code);
+        if (code == 401 && useAuth) {
+            s_accessToken = "";
+            http.end();
+            continue;
+        }
+        if (code != HTTP_CODE_OK) {
+            if (code == 429) recordRateLimit(http);
+            http.end();
+            return false;
+        }
+        size_t bodySize = 0;
+        bool complete = readResponse(http, bodySize);
+        http.end();
+        if (!complete) return false;
+        return parseAircraft(bodySize);
+    }
+    return false;
 }

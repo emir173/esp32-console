@@ -91,9 +91,6 @@ public:
             flags |= 2;
         }
 
-        // Kuyruk tamponuna ekle
-        pushTrail();
-
         return flags;
     }
 
@@ -103,8 +100,8 @@ public:
         if (vy <= 0.0f) return false;  // Sadece top asagi inerken kontrol et
 
         float halfW = PADDLE_W / 2.0f;
-        if (y + BALL_R >= (float)PADDLE_Y &&
-            y + BALL_R < (float)(PADDLE_Y + PADDLE_H + 3) &&
+        if (prevY + BALL_R <= (float)PADDLE_Y &&
+            y + BALL_R >= (float)PADDLE_Y &&
             x >= paddleX - halfW - BALL_R &&
             x <= paddleX + halfW + BALL_R) {
 
@@ -127,6 +124,9 @@ public:
 
     void bounceX() { vx = -vx; }
     void bounceY() { vy = -vy; }
+
+    // Undo the current physics step before reflecting to limit penetration.
+    void restorePreviousPosition() { x = prevX; y = prevY; }
 
     void setSpeed(float spd) { speed = spd; }
 

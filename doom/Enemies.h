@@ -54,7 +54,7 @@ inline void explodeBarrel(int barrelIdx, uint32_t now) {
     playSound(NOTE_E3, 120);
 
     for (int i = 0; i < NUM_SPRITES; i++) {
-        if (i == barrelIdx || sprites[i].state <= 0 || sprites[i].animState == ANIM_DEAD) continue;
+        if (i == barrelIdx || !isAliveTarget(sprites[i])) continue;
         float dx = sprites[i].x - bx, dy = sprites[i].y - by;
         float distSq = dx * dx + dy * dy;
         if (distSq < 6.25f) {
@@ -137,8 +137,8 @@ inline void updateAnimations(uint32_t now) {
 // ============================================================
 inline void knockbackSprite(int i, float mx, float my) {
     float tx = sprites[i].x + mx, ty = sprites[i].y + my;
-    if ((int)tx >= 0 && (int)tx < MW && MAP[(int)sprites[i].y][(int)tx] == 0) sprites[i].x = tx;
-    if ((int)ty >= 0 && (int)ty < MH && MAP[(int)ty][(int)sprites[i].x] == 0) sprites[i].y = ty;
+    if (isWalkable(tx, sprites[i].y)) sprites[i].x = tx;
+    if (isWalkable(sprites[i].x, ty)) sprites[i].y = ty;
 }
 
 // ============================================================
@@ -154,8 +154,8 @@ inline void updateAllEnemies(float dt, uint32_t now, bool isParrying) {
         if (sprites[i].state <= 0) continue;
 
         float dx = px - sprites[i].x, dy = py - sprites[i].y;
-        float dist = sqrt(dx * dx + dy * dy);
-        if (dist < 0.001f) continue;
+        // Aynı konumdaki eşya/mermi de işlenir; AI bölmelerini sıfırdan koru.
+        float dist = max(0.001f, sqrtf(dx * dx + dy * dy));
 
         bool hasLOS = checkLOS(sprites[i].x, sprites[i].y, dx, dy, dist);
 
@@ -288,8 +288,7 @@ inline void updateAllEnemies(float dt, uint32_t now, bool isParrying) {
                 sprites[i].state = 0;
             } else {
                 for (int j = 0; j < NUM_SPRITES; j++) {
-                    if (sprites[j].state >= 1 && isMonsterType(sprites[j].type) &&
-                        sprites[j].animState != ANIM_DEAD) {
+                    if (isAliveTarget(sprites[j]) && isMonsterType(sprites[j].type)) {
                         float diffX = sprites[j].x - sprites[i].x;
                         float diffY = sprites[j].y - sprites[i].y;
                         if ((diffX * diffX + diffY * diffY) < 0.25f) {

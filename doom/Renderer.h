@@ -5,6 +5,19 @@
 // ============================================================
 
 #include "Config.h"
+#include "Bmp.h"
+
+// Doom'un texture/framebuffer/USB yolu BGR565 kullanır. Kütüphanenin ortak
+// User_Setup.h dosyası RGB olsa da, yalnızca bu oyunda eski BGR panel sırasını
+// uygula. Rotation=1 yön bitleri korunur; byte swap ayrı bir ayardır.
+constexpr uint8_t DOOM_MADCTL = TFT_MAD_MY | TFT_MAD_MV | TFT_MAD_BGR;
+inline void initDoomDisplay() {
+    tft.init();
+    tft.setRotation(1);
+    tft.writecommand(TFT_MADCTL);
+    tft.writedata(DOOM_MADCTL);
+    tft.setSwapBytes(true);
+}
 
 // ============================================================
 //  Yumuşak sis yardımcıları — 32 seviyeli light diminishing.
@@ -409,30 +422,23 @@ inline void makeFlatTexes() {
 //  64x64, chroma-key (mor) → saydam, siyah → koyu gri.
 // ============================================================
 inline bool loadBMP(const char* filename, int id, uint8_t* fileBuf) {
-    if (!tex[id]) return false;
+    if (id <= 0 || id >= MAX_TEX || !tex[id] || !fileBuf) return false;
 
     File f = SD.open(filename, FILE_READ);
     if (!f) return false;
 
     size_t fSize = f.size();
-    if (fSize > 80000) { f.close(); return false; }
-    f.read(fileBuf, fSize);
+    if (fSize < 54 || fSize > 80000) { f.close(); return false; }
+    size_t bytesRead = f.read(fileBuf, fSize);
     f.close();
+    if (bytesRead != fSize) return false;
 
-    uint8_t* hdr = fileBuf;
-    if (hdr[0] != 'B' || hdr[1] != 'M') { return false; }
-    uint32_t dataOfs = (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8) | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
-    int32_t w  = (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8) | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
-    int32_t h  = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8) | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
-    uint16_t bpp = (uint16_t)(hdr[28] | (hdr[29] << 8));
-    bool bottomUp = (h > 0);
-    int32_t absH = bottomUp ? h : -h;
-    if (w != TEX_W || absH != TEX_H || bpp != 24) { return false; }
+    BmpLayout layout;
+    if (!decodeBMP24(fileBuf, fSize, TEX_W, TEX_H, layout)) return false;
 
-    uint32_t rowSz = ((w * 3 + 3) & ~3);
     for (int row = 0; row < TEX_H; row++) {
-        int tgtY = bottomUp ? (TEX_H - 1 - row) : row;
-        uint8_t* rowBuf = fileBuf + dataOfs + (row * rowSz);
+        int tgtY = layout.bottomUp ? (TEX_H - 1 - row) : row;
+        uint8_t* rowBuf = fileBuf + layout.dataOffset + (row * layout.rowSize);
         for (int x = 0; x < TEX_W; x++) {
             uint8_t b = rowBuf[x * 3], g = rowBuf[x * 3 + 1], r = rowBuf[x * 3 + 2];
             uint16_t c = COL_RGB(r, g, b);
@@ -449,144 +455,27 @@ inline bool loadBMP(const char* filename, int id, uint8_t* fileBuf) {
 //  Menü arka planı olarak kullanılır.
 // ============================================================
 inline bool loadTitlePic(uint8_t* fileBuf) {
-    if (!titlePicBuf) return false;
+    if (!titlePicBuf || !fileBuf) return false;
 
     File f = SD.open("/doom/TITLEPIC.bmp", FILE_READ);
     if (!f) return false;
 
     size_t fSize = f.size();
-    if (fSize > 80000) { f.close(); return false; }
-    f.read(fileBuf, fSize);
+    if (fSize < 54 || fSize > 80000) { f.close(); return false; }
+    size_t bytesRead = f.read(fileBuf, fSize);
     f.close();
+    if (bytesRead != fSize) return false;
 
-    uint8_t* hdr = fileBuf;
-    if (hdr[0] != 'B' || hdr[1] != 'M') { return false; }
-    uint32_t dataOfs = hdr[10] | (hdr[11] << 8) | (hdr[12] << 16) | (hdr[13] << 24);
-    int32_t w  = hdr[18] | (hdr[19] << 8) | (hdr[20] << 16) | (hdr[21] << 24);
-    int32_t h  = hdr[22] | (hdr[23] << 8) | (hdr[24] << 16) | (hdr[25] << 24);
-    uint16_t bpp = hdr[28] | (hdr[29] << 8);
-    bool bottomUp = (h > 0);
-    int32_t absH = bottomUp ? h : -h;
-    if (w != 160 || absH != 128 || bpp != 24) { return false; }
+    BmpLayout layout;
+    if (!decodeBMP24(fileBuf, fSize, SCR_W, SCR_H, layout)) return false;
 
-    uint32_t rowSz = ((w * 3 + 3) & ~3);
-    for (int row = 0; row < 128; row++) {
-        int tgtY = bottomUp ? (128 - 1 - row) : row;
-        uint8_t* rowBuf = fileBuf + dataOfs + (row * rowSz);
-        for (int x = 0; x < 160; x++) {
+    for (int row = 0; row < SCR_H; row++) {
+        int tgtY = layout.bottomUp ? (SCR_H - 1 - row) : row;
+        uint8_t* rowBuf = fileBuf + layout.dataOffset + (row * layout.rowSize);
+        for (int x = 0; x < SCR_W; x++) {
             uint8_t b = rowBuf[x * 3], g = rowBuf[x * 3 + 1], r = rowBuf[x * 3 + 2];
-            titlePicBuf[tgtY * 160 + x] = COL_RGB(r, g, b);
+            titlePicBuf[tgtY * SCR_W + x] = COL_RGB(r, g, b);
         }
     }
     return true;
-}
-
-// ============================================================
-//  drawIconDoom — DOOM ikonu: artı işareti + daire
-// ============================================================
-inline void drawIconDoom(int x, int y, bool sel) {
-    uint16_t c = sel ? COL_MENU_TITLE : COL_RGB(80, 20, 0);
-    tft.drawCircle(x + 12, y + 12, 8, c);
-    tft.drawFastHLine(x + 2, y + 12, 8, c);
-    tft.drawFastHLine(x + 15, y + 12, 8, c);
-    tft.drawFastVLine(x + 12, y + 2, 8, c);
-    tft.drawFastVLine(x + 12, y + 15, 8, c);
-    tft.drawPixel(x + 12, y + 12, c);
-}
-
-// ============================================================
-//  drawIconSnake — SNAKE ikonu: yılan başı + gövde + göz
-// ============================================================
-inline void drawIconSnake(int x, int y, bool sel) {
-    uint16_t c = sel ? COL_MENU_SNAKE : COL_RGB(0, 80, 20);
-    tft.fillRect(x + 4, y + 14, 16, 6, c);
-    tft.fillRect(x + 14, y + 6, 6, 14, c);
-    tft.fillRect(x + 6, y + 6, 10, 6, c);
-    tft.drawPixel(x + 8, y + 8, TFT_BLACK);
-}
-
-// ============================================================
-//  drawMasterMenu — Ana OS menüsü (DOOM / SNAKE)
-// ============================================================
-inline void drawMasterMenu(bool fullRedraw) {
-    if (fullRedraw) {
-        tft.fillScreen(TFT_BLACK);
-        tft.fillRect(0, 0, 160, 22, COL_RGB(15, 15, 30));
-        tft.setTextColor(COL_ARMOR_VAL);
-        tft.setTextSize(1);
-        tft.setCursor(68, 7);
-        tft.print("E-OS");
-        tft.drawFastHLine(0, 22, 160, COL_MENU_SYS);
-        masterMenuDrawn = true;
-    }
-
-    struct { const char* label; const char* sub; uint16_t color; } items[] = {
-        { "DOOM",  "FPS Klasigi",  COL_MENU_TITLE },
-        { "SNAKE", "Retro Yilan",  COL_MENU_SNAKE }
-    };
-
-    int yBase = 32;
-    for (int i = 0; i < 2; i++) {
-        bool sel = (i == masterMenuSel);
-        int cy = yBase + i * 32;
-
-        uint16_t bg = sel ? COL_RGB(30, 30, 30) : TFT_BLACK;
-        uint16_t border = sel ? items[i].color : COL_DARKGRAY;
-
-        tft.fillRect(4, cy, 152, 28, bg);
-        tft.drawRect(4, cy, 152, 28, border);
-        tft.drawRect(6, cy + 2, 24, 24, border);
-
-        if (i == 0) drawIconDoom(6, cy + 2, sel);
-        else        drawIconSnake(6, cy + 2, sel);
-
-        tft.setTextSize(1);
-        tft.setTextColor(sel ? items[i].color : COL_RGB(120, 120, 120), bg);
-        tft.setCursor(38, cy + 5);
-        tft.print(items[i].label);
-
-        tft.setTextColor(sel ? COL_RGB(200, 200, 200) : COL_RGB(80, 80, 80), bg);
-        tft.setCursor(38, cy + 16);
-        tft.print(items[i].sub);
-    }
-}
-
-// ============================================================
-//  snakeDraw — Yılan oyununu TFT'ye çizer (CS=5 piksel/hücre)
-// ============================================================
-inline void snakeDraw() {
-    const int CS = 5;
-    const int OX = 0, OY = 0;
-
-    if (!snakeDrawn) {
-        tft.fillScreen(COL_SNAKE_BG);
-        tft.drawFastHLine(0, SNAKE_H * CS, 160, COL_SNAKE_HLINE);
-        snakeDrawn = true;
-    }
-
-    tft.setTextSize(1);
-    tft.setTextColor(COL_RGB(0, 200, 0), COL_SNAKE_BG);
-    tft.setCursor(4, SNAKE_H * CS + 4);
-    tft.printf("SCORE: %04d", snakeScore);
-
-    tft.fillRect(OX + snakeFoodX * CS, OY + snakeFoodY * CS, CS - 1, CS - 1, COL_SNAKE_FOOD);
-
-    for (int i = 1; i < snakeLen; i++) {
-        uint8_t g = 100 + (i * 100 / snakeLen);
-        tft.fillRect(OX + snakeBody[i].x * CS, OY + snakeBody[i].y * CS, CS - 1, CS - 1, COL_RGB(0, g, 0));
-    }
-    tft.fillRect(OX + snakeBody[0].x * CS, OY + snakeBody[0].y * CS, CS - 1, CS - 1, COL_SNAKE_HEAD);
-
-    if (snakeDead) {
-        tft.setTextSize(2);
-        tft.setTextColor(COL_GAMEOVER);
-        tft.setCursor(26, 55);
-        tft.print("GAME OVER");
-        tft.setTextSize(1);
-        tft.setTextColor(COL_RGB(180, 180, 180));
-        tft.setCursor(45, 95);
-        tft.print("BTN_A: Retry");
-        tft.setCursor(45, 110);
-        tft.print("BTN_B: Exit");
-    }
 }

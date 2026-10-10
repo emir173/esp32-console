@@ -122,11 +122,11 @@ inline void drawPipe(TFT_eSprite& canvas, const Pipe& p) {
 
     int gapTop = p.gapCenter - PIPE_GAP / 2;
     int gapBot = p.gapCenter + PIPE_GAP / 2;
-    int lipW = 4;
+    int lipW = PIPE_LIP_OVERHANG * 2;
 
     // --- Upper Pipe ---
     if (gapTop > 0) {
-        int lipY = gapTop - 5;
+        int lipY = gapTop - PIPE_LIP_H;
         if (lipY < 0) lipY = 0;
 
         // Body fill
@@ -141,14 +141,14 @@ inline void drawPipe(TFT_eSprite& canvas, const Pipe& p) {
         }
 
         // Lip
-        canvas.fillRect(px - 2, lipY, PIPE_W + lipW, gapTop - lipY, COL_PIPE_LIP);
-        canvas.drawRect(px - 2, lipY, PIPE_W + lipW, gapTop - lipY, COL_PIPE_BORDER);
+        canvas.fillRect(px - PIPE_LIP_OVERHANG, lipY, PIPE_W + lipW, gapTop - lipY, COL_PIPE_LIP);
+        canvas.drawRect(px - PIPE_LIP_OVERHANG, lipY, PIPE_W + lipW, gapTop - lipY, COL_PIPE_BORDER);
         canvas.drawFastVLine(px + 2, lipY + 1, (gapTop - lipY) - 2, COL_PIPE_HIGHLIGHT);
     }
 
     // --- Lower Pipe ---
     if (gapBot < GROUND_Y) {
-        int lipH = 5;
+        int lipH = PIPE_LIP_H;
         int bodyH = GROUND_Y - gapBot;
         if (gapBot + lipH > GROUND_Y) lipH = GROUND_Y - gapBot;
 
@@ -164,8 +164,8 @@ inline void drawPipe(TFT_eSprite& canvas, const Pipe& p) {
         }
 
         // Lip
-        canvas.fillRect(px - 2, gapBot, PIPE_W + lipW, lipH, COL_PIPE_LIP);
-        canvas.drawRect(px - 2, gapBot, PIPE_W + lipW, lipH, COL_PIPE_BORDER);
+        canvas.fillRect(px - PIPE_LIP_OVERHANG, gapBot, PIPE_W + lipW, lipH, COL_PIPE_LIP);
+        canvas.drawRect(px - PIPE_LIP_OVERHANG, gapBot, PIPE_W + lipW, lipH, COL_PIPE_BORDER);
         canvas.drawFastVLine(px + 2, gapBot + 1, lipH - 2, COL_PIPE_HIGHLIGHT);
     }
 }
@@ -183,8 +183,8 @@ inline void drawAllPipes(TFT_eSprite& canvas, const Pipes& pipes) {
 //  HUD: SCORE + POPUP ANIMATION + FPS
 // ============================================================
 inline void drawScore(TFT_eSprite& canvas, int score, float popupTimer, int currentFPS, bool showFps, int birdY) {
-    char buf[8];
-    sprintf(buf, "%d", score);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%d", score);
     int sx = SCR_W / 2 - (strlen(buf) * 6);
 
     // Normal score (shadow + text)
@@ -216,8 +216,8 @@ inline void drawScore(TFT_eSprite& canvas, int score, float popupTimer, int curr
 
     // FPS
     if (showFps) {
-        char fpsStr[12];
-        sprintf(fpsStr, "FPS:%d", currentFPS);
+        char fpsStr[16];
+        snprintf(fpsStr, sizeof(fpsStr), "FPS:%d", currentFPS);
         int fpsW = strlen(fpsStr) * 6;
         canvas.setTextSize(1);
         canvas.setTextColor(COL_HUD_TEXT);

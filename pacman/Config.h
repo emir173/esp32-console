@@ -6,6 +6,7 @@
 
 #include <TFT_eSPI.h>
 #include <Wire.h>
+#include <math.h>
 #include "../hardware_config.h"
 #include "../dev_tools.h"
 #include "../GameBase.h"
@@ -60,6 +61,7 @@ constexpr float DT_CAP         = 0.05f;
 constexpr int   NUM_GHOSTS     = 3;
 constexpr int   DEADZONE       = 250;
 constexpr float SNAP_TOLERANCE = 1.5f;
+constexpr float MOVE_STEP      = 0.5f; // Merkez/duvar kontrolunu atlamayan alt adim
 
 // ============================================================
 //  State sureleri (ms)
@@ -139,16 +141,19 @@ extern int joyCenterX;
 extern int joyCenterY;
 extern uint32_t soundEndTime;
 extern uint32_t stateTimer;
+extern uint32_t pauseStarted;
 extern GameState state;
 extern uint8_t gameMap[ROWS][COLS];
 
 // ============================================================
 //  isWall — Verilen kare duvar mi?
-//  c: sutun, r: satir. Yatay sinir disi tunnel (false),
+//  c: sutun, r: satir. Acik satirda yatay sinir disi tunnel (false),
 //  dikey sinir disi duvar (true) kabul edilir.
 // ============================================================
 inline bool isWall(int c, int r) {
-    if (c < 0 || c >= COLS) return false;
     if (r < 0 || r >= ROWS) return true;
+    // Yalniz iki ucu da acik olan satirlar yatay tuneldir.
+    if (c < 0 || c >= COLS)
+        return gameMap[r][0] == CELL_WALL || gameMap[r][COLS - 1] == CELL_WALL;
     return gameMap[r][c] == CELL_WALL;
 }

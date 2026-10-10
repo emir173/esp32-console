@@ -76,7 +76,9 @@ inline void drawPacman(float x, float y, int dx, int dy) {
 inline void drawGhost(const Ghost &g) {
     uint16_t c = g.color;
     if (g.mode == GHOST_SCARED) {
-        if (g.scaredUntil - millis() < SCARED_WARN && (millis() / 200) % 2 == 0)
+        uint32_t animationNow = state == PAUSE ? pauseStarted : millis();
+        int32_t remaining = (int32_t)(g.scaredUntil - animationNow);
+        if (remaining <= (int32_t)SCARED_WARN && (millis() / 200) % 2 == 0)
             c = TFT_WHITE;
         else
             c = COL_SCARED_BLUE;

@@ -351,6 +351,10 @@ void renderDrawConnecting() {
 //  renderDrawOffline — Offline mode
 // ══════════════════════════════════════════════════════════════
 void renderDrawOffline() {
+    uint32_t lastUpdate;
+    xSemaphoreTake(g_aircraftMutex, portMAX_DELAY);
+    lastUpdate = g_lastUpdate_ms;
+    xSemaphoreGive(g_aircraftMutex);
     spr.fillSprite(COL_BG);
     renderDrawStatusBar();
 
@@ -373,8 +377,8 @@ void renderDrawOffline() {
     spr.setCursor((160 - msg2W) / 2, 62);
     spr.print(msg2);
 
-    if (g_lastUpdate_ms > 0) {
-        uint32_t ago = (millis() - g_lastUpdate_ms) / 1000;
+    if (g_dataValid) {
+        uint32_t ago = (millis() - lastUpdate) / 1000;
         char buf[32];
         snprintf(buf, sizeof(buf), "Last data: %lu s ago", (unsigned long)ago);
         int bw = strlen(buf) * 6;
@@ -418,6 +422,13 @@ void renderOLEDInfo() {
 void renderOLEDSummary() {
     if (!s_oledReady) return;
 
+    int aircraftCount;
+    uint32_t lastUpdate;
+    xSemaphoreTake(g_aircraftMutex, portMAX_DELAY);
+    aircraftCount = g_aircraftCount;
+    lastUpdate = g_lastUpdate_ms;
+    xSemaphoreGive(g_aircraftMutex);
+
     oled.setPowerSave(0);
     oled.clearBuffer();
     oled.setFont(u8g2_font_6x10_tr);
@@ -433,7 +444,7 @@ void renderOLEDSummary() {
 
     // Line 2 — Total aircraft
     char countBuf[24];
-    snprintf(countBuf, sizeof(countBuf), "Aircraft: %u", g_aircraftCount);
+    snprintf(countBuf, sizeof(countBuf), "Aircraft: %d", aircraftCount);
     oled.drawStr(0, 22, countBuf);
 
     // Line 3 — Zoom
@@ -448,8 +459,8 @@ void renderOLEDSummary() {
 
     // Line 5 — Last update
     char updBuf[24];
-    if (g_lastUpdate_ms > 0) {
-        uint32_t ago = (millis() - g_lastUpdate_ms) / 1000;
+    if (g_dataValid) {
+        uint32_t ago = (millis() - lastUpdate) / 1000;
         snprintf(updBuf, sizeof(updBuf), "Update: %lu s", (unsigned long)ago);
     } else {
         strcpy(updBuf, "Update: none");

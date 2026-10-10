@@ -7,6 +7,7 @@
 #include "Player.h"
 #include "Ghosts.h"
 #include "Renderer.h"
+#include "Input.h"
 
 // ============================================================
 //  Global degisken tanimlari
@@ -29,8 +30,30 @@ int joyCenterX = ADC_CENTER;
 int joyCenterY = ADC_CENTER;
 uint32_t stateTimer = 0;
 uint32_t soundEndTime = 0;
-int prevBtnA = HIGH;
 GameState state = TITLE;
+PacmanButton buttonA, buttonB, buttonC, buttonJoy;
+uint32_t pauseStarted = 0;
+
+void saveBestIfRecord() {
+    if (score > highScore) {
+        highScore = score;
+        osSaveHighScore("hs_pacman", highScore);
+    }
+}
+
+void enterGameMenu() {
+    saveBestIfRecord();
+    state = TITLE;
+}
+
+void resumeGame(uint32_t now) {
+    for (int i = 0; i < NUM_GHOSTS; i++) {
+        if (ghosts[i].mode == GHOST_SCARED)
+            ghosts[i].scaredUntil += now - pauseStarted;
+    }
+    state = PLAYING;
+    playSound(NOTE_D5, 40);
+}
 
 // ============================================================
 //  OS Wrapper fonksiyonlari
@@ -40,6 +63,7 @@ void playSound(uint16_t freq, uint32_t dur) {
 }
 
 void returnToOS() {
+    saveBestIfRecord();
     osReturnToOS(tft, false);
 }
 
@@ -62,6 +86,7 @@ void resetActors() {
         ghosts[i].a.speed = GHOST_BASE_SPEED + (level * GHOST_SPEED_PER_LV);
         ghosts[i].type = i;
         ghosts[i].mode = GHOST_CHASE;
+        ghosts[i].scaredUntil = 0;
         ghosts[i].color = ghostColors[i];
         ghosts[i].lastTileC = -1;
         ghosts[i].lastTileR = -1;
@@ -136,10 +161,19 @@ void setup() {
 
     // 9) Canvas sprite (double buffer)
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    if (!canvas.createSprite(SCR_W, SCR_H)) {
+        tft.setTextColor(TFT_RED);
+        tft.setCursor(8, 50); tft.print("Canvas memory error");
+        tft.setCursor(8, 65); tft.print("[C] OS Menu");
+        while (true) {
+            if (digitalRead(BTN_C) == LOW) returnToOS();
+            delay(10);
+        }
+    }
 
     // 10) Joystick kalibrasyon
     bool warn = false;
+    uint32_t calibrationStarted = millis();
     while (analogRead(JOY_X) < 1400 || analogRead(JOY_X) > 2600 ||
            analogRead(JOY_Y) < 1400 || analogRead(JOY_Y) > 2600) {
         if (!warn) {
@@ -148,10 +182,20 @@ void setup() {
             tft.setCursor(23, 60); tft.print("RELEASE JOYSTICK!");
             warn = true;
         }
+        if (digitalRead(BTN_C) == LOW) returnToOS();
+        if (millis() - calibrationStarted >= 5000) break;
         delay(50);
     }
     if (warn) { tft.fillScreen(TFT_BLACK); delay(300); }
-    osCalibrateJoystick(joyCenterX, joyCenterY);
+    if (analogRead(JOY_X) >= 1400 && analogRead(JOY_X) <= 2600 &&
+        analogRead(JOY_Y) >= 1400 && analogRead(JOY_Y) <= 2600)
+        osCalibrateJoystick(joyCenterX, joyCenterY);
+
+    uint32_t inputNow = millis();
+    buttonA.reset(digitalRead(BTN_A), inputNow);
+    buttonB.reset(digitalRead(BTN_B), inputNow);
+    buttonC.reset(digitalRead(BTN_C), inputNow);
+    buttonJoy.reset(digitalRead(JOY_SW), inputNow);
 
     // 11) Rastgele tohum
     randomSeed(analogRead(JOY_Y) ^ (analogRead(JOY_X) << 8) ^ micros());
@@ -161,20 +205,13 @@ void setup() {
 //  loop — Ana oyun dongusu (60 FPS delta-time)
 // ============================================================
 void loop() {
-    // PAUSE toggle (joystick butonu)
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == PLAYING) {
-            state = PAUSE;
-            playSound(NOTE_G4, 50);
-        }
-    }
-    prevJoySw = currJoySw;
-
     // Ton sure kontrolu
     uint32_t now = millis();
     osUpdateSound(soundEndTime);
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
 
     // Delta-time + 60 FPS frame kilidi
     static uint32_t lastFrame = 0;
@@ -183,10 +220,17 @@ void loop() {
     if (dt < FRAME_SEC) return;
     lastFrame = now;
 
-    // BTN_A kenar algilama
-    int btnA = digitalRead(BTN_A);
-    bool pressA = (btnA == LOW && prevBtnA == HIGH);
-    prevBtnA = btnA;
+    bool pressA = buttonA.takePress();
+    bool pressB = buttonB.takePress();
+    bool pressC = buttonC.takePress();
+    bool pressJoy = buttonJoy.takePress();
+
+    if (state == PLAYING && pressJoy) {
+        state = PAUSE;
+        pauseStarted = now;
+        playSound(NOTE_G4, 50);
+        pressA = pressB = pressC = pressJoy = false;
+    }
 
     // ============================================================
     //  STATE: TITLE — Baslik/acilis ekrani
@@ -229,8 +273,7 @@ void loop() {
             playSound(NOTE_E5, 50);
             resetLevel(true);
         }
-        if (!digitalRead(BTN_B)) {
-            delay(DEBOUNCE_DELAY);
+        else if (pressC) {
             returnToOS();
         }
         return;
@@ -249,16 +292,12 @@ void loop() {
         canvas.pushSprite(0, 0);
         if (pressA) {
             playSound(NOTE_D5, 50);
-            delay(DEBOUNCE_DELAY);
             resetLevel(true);
         }
-        if (!digitalRead(BTN_B)) {
-            delay(DEBOUNCE_DELAY);
-            state = TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+        else if (pressB) {
+            enterGameMenu();
         }
-        if (!digitalRead(BTN_B)) {
-            delay(DEBOUNCE_DELAY);
+        else if (pressC) {
             returnToOS();
         }
         return;
@@ -284,17 +323,14 @@ void loop() {
     // ============================================================
     if (state == DYING) {
         drawMap(); drawHUD();
-        int r = 3 - (now - stateTimer) / DYING_STEP;
+        int r = 3 - (int)((now - stateTimer) / DYING_STEP);
         if (r > 0) canvas.fillCircle(pac.x, pac.y + MAP_Y, r, COL_PAC);
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
         if (now - stateTimer > DYING_DURATION) {
             lives--;
             if (lives <= 0) {
-                if (score > highScore) {
-                    highScore = score;
-                    osSaveHighScore("hs_pacman", highScore);
-                }
+                saveBestIfRecord();
                 state = GAMEOVER;
                 playSound(NOTE_E3, 120);
             } else {
@@ -377,18 +413,13 @@ void loop() {
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
 
-        if (!digitalRead(BTN_A)) {
-            playSound(NOTE_D5, 40);
-            delay(DEBOUNCE_DELAY);
-            state = PLAYING;
+        if (pressA || pressJoy) {
+            resumeGame(now);
         }
-        if (!digitalRead(BTN_B)) {
-            delay(DEBOUNCE_DELAY);
-            state = TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+        else if (pressB) {
+            enterGameMenu();
         }
-        if (!digitalRead(BTN_B)) {
-            delay(DEBOUNCE_DELAY);
+        else if (pressC) {
             returnToOS();
         }
         return;

@@ -4,6 +4,7 @@
 //  Oyuncu kalkanlari: blok-tabanli hasar, kademeli parcalanma
 // ============================================================
 #include "Config.h"
+#include <math.h>
 
 struct Bunker {
     bool blocks[BUNKER_ROWS][BUNKER_COLS];
@@ -31,10 +32,12 @@ struct Bunker {
     }
 
     bool hitTest(float px, float py, float halfW, float halfH) {
-        int c0 = (int)((px - halfW - (float)posX) / (float)BUNKER_BLOCK_W);
-        int c1 = (int)((px + halfW - (float)posX) / (float)BUNKER_BLOCK_W);
-        int r0 = (int)((py - halfH - (float)posY) / (float)BUNKER_BLOCK_H);
-        int r1 = (int)((py + halfH - (float)posY) / (float)BUNKER_BLOCK_H);
+        if (px + halfW <= posX || px - halfW >= posX + width() ||
+            py + halfH <= posY || py - halfH >= posY + height()) return false;
+        int c0 = (int)floorf((px - halfW - (float)posX) / (float)BUNKER_BLOCK_W);
+        int c1 = (int)ceilf((px + halfW - (float)posX) / (float)BUNKER_BLOCK_W) - 1;
+        int r0 = (int)floorf((py - halfH - (float)posY) / (float)BUNKER_BLOCK_H);
+        int r1 = (int)ceilf((py + halfH - (float)posY) / (float)BUNKER_BLOCK_H) - 1;
 
         if (c0 < 0) c0 = 0;
         if (r0 < 0) r0 = 0;
@@ -67,8 +70,8 @@ struct BunkerManager {
         for (int i = 0; i < BUNKER_COUNT; i++) {
             if (bx - 2.0f >= (float)(bunkers[i].posX + bunkers[i].width()))  continue;
             if (bx + 2.0f <= (float)bunkers[i].posX) continue;
-            if (by < (float)bunkers[i].posY) continue;
-            if (by > (float)(bunkers[i].posY + bunkers[i].height())) continue;
+            if (by + 2.0f <= (float)bunkers[i].posY) continue;
+            if (by - 2.0f >= (float)(bunkers[i].posY + bunkers[i].height())) continue;
             if (bunkers[i].hitTest(bx, by, 2.0f, 2.0f)) return true;
         }
         return false;

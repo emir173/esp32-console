@@ -32,7 +32,7 @@ extern Ghost ghosts[NUM_GHOSTS];
 //  SCARED: rastgele kacar
 //  EATEN:  eve (9,9) doner, varinca chase'e gecer
 // ============================================================
-inline void moveGhost(Ghost &g, float dt) {
+inline void moveGhostStep(Ghost &g, float dt) {
     int cx = ((int)g.a.x / TILE) * TILE + HALF_TILE;
     int cy = ((int)g.a.y / TILE) * TILE + HALF_TILE;
     int curC = cx / TILE;
@@ -54,7 +54,6 @@ inline void moveGhost(Ghost &g, float dt) {
                 if (((int)g.a.x / TILE) == 9 && ((int)g.a.y / TILE) == 9) g.mode = GHOST_CHASE;
             } else if (g.mode == GHOST_SCARED) {
                 tc = random(0, COLS); tr = random(0, ROWS);
-                if (millis() > g.scaredUntil) g.mode = GHOST_CHASE;
             } else {
                 if (g.type == GHOST_TYPE_BLINKY) {
                     tc = (int)pac.x / TILE; tr = (int)pac.y / TILE;
@@ -84,6 +83,7 @@ inline void moveGhost(Ghost &g, float dt) {
             }
             if (!foundMove) {
                 bestDx = -g.a.dx; bestDy = -g.a.dy;
+                if (isWall(curC + bestDx, curR + bestDy)) bestDx = bestDy = 0;
             }
             g.a.dx = bestDx; g.a.dy = bestDy;
         }
@@ -97,4 +97,17 @@ inline void moveGhost(Ghost &g, float dt) {
     g.a.y += g.a.dy * spd * dt;
     if (g.a.x < 0) g.a.x += SCR_W;
     if (g.a.x >= SCR_W) g.a.x -= SCR_W;
+}
+
+inline void moveGhost(Ghost &g, float dt) {
+    // Sure koridor ortasinda da biter; uint32 millis tasmasina dayanir.
+    if (g.mode == GHOST_SCARED && (int32_t)(millis() - g.scaredUntil) >= 0)
+        g.mode = GHOST_CHASE;
+    float maxSpeed = g.a.speed * EATEN_SPEED_MUL;
+    if (maxSpeed <= 0 || dt <= 0) return;
+    while (dt > 0) {
+        float step = fminf(dt, MOVE_STEP / maxSpeed);
+        moveGhostStep(g, step);
+        dt -= step;
+    }
 }

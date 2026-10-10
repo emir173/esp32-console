@@ -12,6 +12,7 @@
 //    Buzzer -> Ses efektleri
 // ============================================================
 #include "Renderer.h"
+#include "Input.h"
 
 // ============ Global Nesneler ============
 TFT_eSPI tft = TFT_eSPI();
@@ -25,7 +26,15 @@ void playSound(uint16_t freq, uint32_t dur) {
 }
 
 void returnToOS() {
+    saveHighScoreIfNeeded();
     osReturnToOS(tft, soundEnabled);
+}
+
+void enterGameMenu() {
+    saveHighScoreIfNeeded();
+    fanfare.active = false;
+    osBuzzerOff();
+    state = ST_TITLE;
 }
 
 // ============ Oyun Durumu ============
@@ -49,6 +58,8 @@ int joyCenterX = 0, joyCenterY = 0;
 // ============ Zamanlama / Delta-Time ============
 float gameDT = 0.0f;
 uint32_t lastFrameMs = 0;
+uint32_t lastFrameUs = 0;
+constexpr uint32_t FRAME_US = 1000000UL / 60;
 uint32_t animTick = 0;
 uint32_t stateTimer = 0;
 uint32_t fpsFrameCount = 0;
@@ -58,6 +69,9 @@ bool showFps = false;
 
 // ============ Skor ============
 int highScore = 0;
+bool newRecord = false;
+
+PlatformerButton buttonA, buttonB, buttonC, buttonJoy;
 
 // ============ Non-Blocking Fanfare ============
 FlagFanfare fanfare;
@@ -100,7 +114,15 @@ void setup() {
     tft.fillScreen(TFT_BLACK);
 
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    if (!canvas.createSprite(SCR_W, SCR_H)) {
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.setCursor(8, 60);
+        tft.print("NO FRAMEBUFFER RAM");
+        while (true) {
+            if (!digitalRead(BTN_B) || !digitalRead(BTN_C)) returnToOS();
+            delay(10);
+        }
+    }
 
     // Joystick kalibrasyon
     bool warningShown = false;
@@ -120,7 +142,12 @@ void setup() {
 
     state = ST_TITLE;
     lastFrameMs = millis();
+    lastFrameUs = micros();
     fpsStartTime = millis();
+    buttonA.reset(digitalRead(BTN_A), lastFrameMs);
+    buttonB.reset(digitalRead(BTN_B), lastFrameMs);
+    buttonC.reset(digitalRead(BTN_C), lastFrameMs);
+    buttonJoy.reset(digitalRead(JOY_SW), lastFrameMs);
 }
 
 // ============================================================
@@ -128,9 +155,18 @@ void setup() {
 // ============================================================
 void loop() {
     uint32_t now = millis();
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
+
+    uint32_t frameNowUs = micros();
+    uint32_t elapsedUs = frameNowUs - lastFrameUs;
+    if (elapsedUs < FRAME_US) { delay(1); return; }
+    lastFrameUs = frameNowUs;
 
     // --- Delta-Time ---
-    float rawDT = (now - lastFrameMs) / 1000.0f;
+    float rawDT = elapsedUs / 1000000.0f;
     gameDT = rawDT * DT_SCALE;
     if (gameDT > 1.5f) gameDT = 1.5f;
     lastFrameMs = now;
@@ -139,37 +175,36 @@ void loop() {
     // --- Non-Blocking Fanfare (bayrak sesi) ---
     fanfare.update();
 
-    // --- BTN_C: OS'a dön (menü ekranında) ---
-    if (!digitalRead(BTN_B) && (state == ST_TITLE)) {
+    bool btnA = buttonA.stable == LOW;
+    bool btnA_pressed = buttonA.takePress();
+    bool btnB_pressed = buttonB.takePress();
+    bool btnC_pressed = buttonC.takePress();
+    bool joyPressed = buttonJoy.takePress();
+
+    // --- BTN_B: OS'a dön (menü ekranında) ---
+    if (btnB_pressed && state == ST_TITLE) {
         playSound(NOTE_G4, 40);
         returnToOS();
+        return;
     }
-
-    // --- BTN_A: kenar tetikleme ---
-    bool btnA = !digitalRead(BTN_A);
-    static bool prevA = false;
-    bool btnA_pressed = (btnA && !prevA);
-    prevA = btnA;
 
     // --- FPS Hesaplama ---
     fpsFrameCount++;
     if (now - fpsStartTime >= 1000) {
-        currentFPS = fpsFrameCount;
+        currentFPS = fpsFrameCount * 1000UL / (now - fpsStartTime);
         fpsFrameCount = 0;
         fpsStartTime = now;
     }
 
     // --- JOY_SW: Pause toggle ---
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == ST_PLAY) {
-            state = ST_PAUSE;
-            playSound(NOTE_G4, 40);
-            osBuzzerOff();
-        }
+    if (joyPressed && state == ST_PLAY) {
+        state = ST_PAUSE;
+        // The pause press belongs only to this transition.
+        joyPressed = false;
+        btnA_pressed = btnB_pressed = btnC_pressed = false;
+        osBuzzerOff();
+        playSound(NOTE_G4, 40);
     }
-    prevJoySw = currJoySw;
 
     // --- Joystick: yatay eksen ---
     float jx = (analogRead(JOY_X) - joyCenterX) / 2048.0f;
@@ -216,8 +251,8 @@ void loop() {
 
         // --- Fizik ---
         updatePhysics();
-        checkTilePickups();
-        updateEnemies();
+        if (state == ST_PLAY) checkTilePickups();
+        if (state == ST_PLAY) updateEnemies();
 
         // --- Kamera ---
         camX = (int)plr.x - SCR_W / 2 + PW / 2;
@@ -238,6 +273,7 @@ void loop() {
         if (now - stateTimer > 1000) {
             loadLevel(curLevel);
             state = ST_PLAY;
+            break;
         }
         canvas.fillSprite(COL_SKY);
         drawTiles();
@@ -256,14 +292,12 @@ void loop() {
             if (curLevel >= NUM_LEVELS) {
                 state = ST_WIN;
                 stateTimer = now;
-                if (plr.score > highScore) {
-                    highScore = plr.score;
-                    osSaveHighScore("hs_platformer", highScore);
-                }
+                saveHighScoreIfNeeded();
             } else {
                 loadLevel(curLevel);
                 state = ST_PLAY;
             }
+            break;
         }
         canvas.fillSprite(COL_SKY);
         drawTiles();
@@ -298,18 +332,15 @@ void loop() {
         drawGameOverScreen();
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
-        if (btnA_pressed) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-            playSound(NOTE_D5, 50);
-        }
-        if (!digitalRead(BTN_B)) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-            playSound(NOTE_G4, 50);
-        }
-        if (!digitalRead(BTN_C)) {
+        if (btnC_pressed) {
             returnToOS();
+        } else if (btnA_pressed) {
+            resetGame();
+            state = ST_PLAY;
+            playSound(NOTE_D5, 50);
+        } else if (btnB_pressed) {
+            enterGameMenu();
+            playSound(NOTE_G4, 50);
         }
         break;
 
@@ -317,18 +348,15 @@ void loop() {
         drawWinScreen();
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
-        if (btnA_pressed) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-            playSound(NOTE_E5, 50);
-        }
-        if (!digitalRead(BTN_B)) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-            playSound(NOTE_G4, 50);
-        }
-        if (!digitalRead(BTN_C)) {
+        if (btnC_pressed) {
             returnToOS();
+        } else if (btnA_pressed) {
+            resetGame();
+            state = ST_PLAY;
+            playSound(NOTE_E5, 50);
+        } else if (btnB_pressed) {
+            enterGameMenu();
+            playSound(NOTE_G4, 50);
         }
         break;
 
@@ -337,20 +365,16 @@ void loop() {
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
 
-        if (btnA_pressed) {
+        if (btnC_pressed) {
+            returnToOS();
+        } else if (btnB_pressed) {
+            enterGameMenu();
+            playSound(NOTE_G4, 50);
+        } else if (btnA_pressed || joyPressed) {
             playSound(NOTE_D5, 40);
             state = ST_PLAY;
             lastFrameMs = millis();
-        }
-        if (!digitalRead(BTN_B)) {
-            playSound(NOTE_G4, 50);
-            resetGame();
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-        }
-        if (!digitalRead(BTN_C)) {
-            playSound(NOTE_G4, 50);
-            returnToOS();
+            lastFrameUs = micros();
         }
         break;
     }

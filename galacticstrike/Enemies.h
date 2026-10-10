@@ -93,7 +93,7 @@ inline void updateWaveSpawning(float dt) {
     if (waveSpawnTimer > 0.0f) return;
 
     if (waveEnemiesSpawned < waveEnemiesPerWave) {
-        if (curWave > 0 && curWave % 5 == 0 && waveEnemiesSpawned == 0) {
+        if ((curWave + 1) % 5 == 0 && waveEnemiesSpawned == 0) {
             spawnEnemy(EN_BOSS);
         } else {
             int r = random(0, 100);

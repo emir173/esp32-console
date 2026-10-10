@@ -43,6 +43,9 @@ int score = 0;
 int highScore = 0;
 int level = 1;
 bool newRecord = false;
+int foodsEaten = 0;
+bool arenaCleared = false;
+unsigned long pauseStartMs = 0;
 
 // ============ Juice State ============
 ScreenShake shake;
@@ -105,6 +108,7 @@ void playSound(uint16_t freq, uint32_t dur) {
 
 // ============ Async Tone Sweep (non-blocking combo break sound) ============
 uint16_t sweepNotes[3] = {0, 0, 0};
+uint32_t sweepDurations[3] = {30, 30, 30};
 int sweepCount = 0;
 int sweepIndex = 0;
 unsigned long sweepNextMs = 0;
@@ -113,14 +117,24 @@ void startSweep(uint16_t n0, uint16_t n1, uint16_t n2) {
     sweepNotes[0] = n0;
     sweepNotes[1] = n1;
     sweepNotes[2] = n2;
+    for (int i = 0; i < 3; i++) sweepDurations[i] = 30;
     sweepCount = 3;
     sweepIndex = 0;
     sweepNextMs = millis();
 }
 
+// Ikinci notayi kare dongusunu durdurmadan zamanla.
+void scheduleSecondTone(uint16_t note, uint32_t duration, unsigned long waitMs) {
+    sweepNotes[0] = note;
+    sweepDurations[0] = duration;
+    sweepCount = 1;
+    sweepIndex = 0;
+    sweepNextMs = millis() + waitMs;
+}
+
 void updateSweep(unsigned long now) {
     if (sweepIndex < sweepCount && now >= sweepNextMs) {
-        playSound(sweepNotes[sweepIndex], 30);
+        playSound(sweepNotes[sweepIndex], sweepDurations[sweepIndex]);
         sweepIndex++;
         sweepNextMs = now + 40;
     }
@@ -149,6 +163,40 @@ void returnToOS() {
     osReturnToOS(tft, soundEnabled);
 }
 
+void handleArenaCleared(unsigned long now) {
+    arenaCleared = true;
+    newRecord = (score > highScore);
+    if (newRecord) {
+        highScore = score;
+        osSaveHighScore("hs_snake", score);
+    }
+    state = GAMEOVER;
+    gameOverMs = now;
+    startSweep(NOTE_C5, NOTE_E5, NOTE_G5);
+}
+
+void resumeGame(unsigned long now) {
+    unsigned long pausedMs = now - pauseStartMs;
+    // Gecen sure referanslari (0 degeri de gecerli olabilir).
+    arenaStartMs += pausedMs;
+    arenaLastShrinkMs += pausedMs;
+    levelChangeMs += pausedMs;
+    food.spawnMs += pausedMs;
+    if (food.poisonActive) food.poisonSpawnMs += pausedMs;
+    // 0 = pasif olan zamanlayicilar.
+    unsigned long* timers[] = { &frozenUntil, &squashStartMs, &comboExpireMs,
+        &comboFlashEndMs, &ghostActiveUntil, &magnetActiveUntil,
+        &shrinkFlashEndMs, &obstacleSpawnMs };
+    for (unsigned long* timer : timers) {
+        if (*timer != 0) *timer += pausedMs;
+    }
+    if (sweepIndex < sweepCount) sweepNextMs += pausedMs;
+    snake.clearQueue();
+    joystick.reset();
+    state = PLAYING;
+    lastMoveMs = lastFrameMs = now;
+}
+
 // ============================================================
 //  Handle death (DRY — single point for all collision types)
 // ============================================================
@@ -171,8 +219,7 @@ void handleDeath(int hitX, int hitY, uint16_t particleColor, int particleCount) 
     deathSegmentIntervalMs = segMs;
 
     playSound(NOTE_E3, 90);
-    delay(100);
-    playSound(NOTE_E3, 120);
+    scheduleSecondTone(NOTE_E3, 120, 100);
 
     deathCinematic = true;
     deathSegmentIdx = 0;
@@ -217,6 +264,8 @@ void resetGame() {
     level = 1;
     score = 0;
     newRecord = false;
+    foodsEaten = 0;
+    arenaCleared = false;
     popupTimer = 0.0f;
     shake.reset();
     frozenUntil = 0;
@@ -368,6 +417,7 @@ void loop() {
     bool currJoySw = digitalRead(JOY_SW);
     if (prevJoySw && !currJoySw) {
         if (state == PLAYING && !deathCinematic) {
+            pauseStartMs = millis();
             state = PAUSE;
             playSound(NOTE_G4, 50);
         }
@@ -404,6 +454,8 @@ void loop() {
     int btnD = digitalRead(BTN_D);
     bool pressD = (btnD == LOW && prevBtnD == HIGH);
     prevBtnD = btnD;
+
+    if (state != PAUSE) updateSweep(now);
 
     // ==========================================
     //  STATE MACHINE
@@ -486,11 +538,13 @@ void loop() {
             if (pressC && ghostCharge >= 1.0f && !ghostActive) {
                 ghostActiveUntil = now + GHOST_DURATION_MS;
                 ghostCharge = 0.0f;
+                ghostActive = true;
                 playSound(NOTE_C5, 50);
             }
             if (pressD && magnetCharge >= 1.0f && !magnetActive) {
                 magnetActiveUntil = now + MAGNET_DURATION_MS;
                 magnetCharge = 0.0f;
+                magnetActive = true;
                 playSound(NOTE_C5, 50);
             }
 
@@ -506,6 +560,10 @@ void loop() {
                 if (tIdx != currentThemeIdx) {
                     currentThemeIdx = tIdx;
                     applyTheme(tIdx);
+                }
+                if (!food.validatePlacement(snake, level, comboCount, arenaInset)) {
+                    handleArenaCleared(now);
+                    break;
                 }
             }
 
@@ -536,13 +594,17 @@ void loop() {
                     shrinkFlashEndMs = now + 400;
                     shake.trigger(1.5f);
                     playSound(NOTE_B3, 40);
+                    if (!food.validatePlacement(snake, level, comboCount, arenaInset)) {
+                        handleArenaCleared(now);
+                        break;
+                    }
                 }
             }
 
             // ---- Movement timing ----
-            unsigned long moveInterval = (unsigned long)BASE_SPEED -
-                                         (unsigned long)(score / 50) * SPEED_DEC;
-            if (moveInterval < MIN_SPEED) moveInterval = MIN_SPEED;
+            unsigned long moveInterval = snakeMoveInterval(score);
+            // Suresi dolan zehir, bu karede carpismaya neden olmamali.
+            food.updatePoison();
 
             if (now - lastMoveMs >= moveInterval && now > frozenUntil) {
                 lastMoveMs = now;
@@ -581,8 +643,8 @@ void loop() {
                 }
 
                 // Check food/poison before moving
-                bool ate = (newX == food.foodX && newY == food.foodY);
-                if (magnetActive && (millis() - food.spawnMs > 500)) {
+                bool ate = (food.foodActive && newX == food.foodX && newY == food.foodY);
+                if (food.foodActive && magnetActive && (millis() - food.spawnMs > 500)) {
                     float fx = food.foodPixelX;
                     float fy = food.foodPixelY;
                     
@@ -677,20 +739,25 @@ void loop() {
                     if (atePoison) {
                         playSound(NOTE_E3, 60);
                     } else if (food.foodType == FOOD_GOLD) {
-                        playSound(NOTE_E5, 30); delay(30); playSound(NOTE_G5, 40);
+                        playSound(NOTE_E5, 30);
+                        scheduleSecondTone(NOTE_G5, 40, 30);
                     } else {
                         uint16_t eatFreq = (comboCount >= 2) ? NOTE_G5 : NOTE_E5;
                         playSound(eatFreq, 30);
                     }
 
                     if (ate) {
+                        foodsEaten++;
                         if (arenaInset > 0) {
                             arenaInset -= ARENA_EXPAND_ON_EAT;
                             if (arenaInset < 0) arenaInset = 0;
                             needBgRender = true;
                         }
                         int effectiveCombo = magnetActive ? 0 : comboCount;
-                        food.spawnFood(snake, level, effectiveCombo, arenaInset);
+                        if (!food.spawnFood(snake, level, effectiveCombo, arenaInset)) {
+                            handleArenaCleared(now);
+                            break;
+                        }
                     }
                 }
             }
@@ -703,7 +770,6 @@ void loop() {
                 comboExpireMs = 0;
             }
 
-            updateSweep(now);
             particles.update(dt);
             shake.update();
 
@@ -735,7 +801,6 @@ void loop() {
                 aboutToShrink = true;
             }
             drawArenaWalls(canvas, arenaInset, shrinkFlashEndMs, aboutToShrink);
-            food.updatePoison();
             food.updateMagnetPixels(snake.x[0], snake.y[0], magnetActive, dt);
             drawFood(canvas, food);
 
@@ -771,7 +836,7 @@ void loop() {
         }
 
         case GAMEOVER:
-            drawGameOver(canvas, score, highScore, newRecord);
+            drawGameOver(canvas, score, highScore, newRecord, foodsEaten, arenaCleared);
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
@@ -799,8 +864,8 @@ void loop() {
 
             // Engel (Seviye 2+): pause'da da her zaman çiz (yanıp sönme sadece ilk 2s)
             if (level >= 2) {
-                bool obstacleVisible = (obstacleSpawnMs == 0 || now - obstacleSpawnMs >= 2000)
-                                     || ((now / 200) % 2 == 0);
+                bool obstacleVisible = (obstacleSpawnMs == 0 || pauseStartMs - obstacleSpawnMs >= 2000)
+                                     || ((pauseStartMs / 200) % 2 == 0);
                 if (obstacleVisible) {
                     int ox = COLS / 2 - 1, oy = ROWS / 2 - 1;
                     if (ox >= arenaInset && ox + 1 < COLS - arenaInset &&
@@ -815,18 +880,19 @@ void loop() {
             int trailLen = (comboCount >= COMBO_TRAIL_HIGH_THRESH)
                          ? COMBO_TRAIL_HIGH : COMBO_TRAIL_LOW;
             drawTrail(canvas, snake, trailLen);
-            bool ghostActiveP = (now < ghostActiveUntil);
+            // Pause ekraninda kalan sure ve engel uyarisi donuk kalsin.
+            bool ghostActiveP = (pauseStartMs < ghostActiveUntil);
             drawSnakeFull(canvas, snake, 2.0f, ghostActiveP);
             particles.draw(canvas);
             drawHUD(canvas, score, currentFPS, showFps);
 
-            float gActiveFracP = ghostActiveP ? (float)(ghostActiveUntil - now) / GHOST_DURATION_MS : 0.0f;
-            float mActiveFracP = (now < magnetActiveUntil) ? (float)(magnetActiveUntil - now) / MAGNET_DURATION_MS : 0.0f;
-            drawPowerUpStatus(canvas, ghostCharge, magnetCharge, ghostActiveP, (now < magnetActiveUntil), gActiveFracP, mActiveFracP);
+            float gActiveFracP = ghostActiveP ? (float)(ghostActiveUntil - pauseStartMs) / GHOST_DURATION_MS : 0.0f;
+            float mActiveFracP = (pauseStartMs < magnetActiveUntil) ? (float)(magnetActiveUntil - pauseStartMs) / MAGNET_DURATION_MS : 0.0f;
+            drawPowerUpStatus(canvas, ghostCharge, magnetCharge, ghostActiveP, (pauseStartMs < magnetActiveUntil), gActiveFracP, mActiveFracP);
 
             float comboFracP = 0.0f;
-            if (comboCount > 1 && comboExpireMs > now) {
-                comboFracP = (float)(comboExpireMs - now) / (float)COMBO_WINDOW_MS;
+            if (comboCount > 1 && comboExpireMs > pauseStartMs) {
+                comboFracP = (float)(comboExpireMs - pauseStartMs) / (float)COMBO_WINDOW_MS;
                 if (comboFracP > 1.0f) comboFracP = 1.0f;
             }
             drawComboBar(canvas, comboCount, comboFracP);
@@ -837,12 +903,9 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
-            if (!digitalRead(BTN_A)) {
+            if (pressA) {
                 playSound(NOTE_D5, 40);
-                state = PLAYING;
-                lastMoveMs = millis();
-                lastFrameMs = millis();
-                arenaLastShrinkMs = millis();
+                resumeGame(now);
             }
             if (!digitalRead(BTN_B)) {
                 playSound(NOTE_G4, 50);

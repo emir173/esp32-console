@@ -57,13 +57,6 @@ struct NoteManager {
     void update(uint32_t songTime, unsigned long nowMs) {
         autoMissThisFrame = 0;
 
-        // Spawn: nota, hit line'a "travelMs" kala ekrana girer
-        while (nextIdx < song->noteCount &&
-               (float)song->notes[nextIdx].timeMs - (float)songTime <= travelMs) {
-            spawnNote(song->notes[nextIdx]);
-            nextIdx++;
-        }
-
         // Y pozisyonu zamandan hesaplanir (birikimli hata olmaz) + otomatik miss
         for (int i = 0; i < MAX_NOTES; i++) {
             Note &n = pool[i];
@@ -80,6 +73,21 @@ struct NoteManager {
                 n.active = false;   // ekran disi temizlik
             }
         }
+
+        // Once eski yuvalari bosalt. Uzun bir karede pencereyi gecmis
+        // chart notalarini da say; dolu havuz yuzunden nota kaybetme.
+        while (nextIdx < song->noteCount &&
+               (float)song->notes[nextIdx].timeMs - (float)songTime <= travelMs) {
+            const SongNote &sn = song->notes[nextIdx];
+            float dtMs = (float)sn.timeMs - (float)songTime;
+            if (dtMs < -okWindowMs) {
+                applyMiss(sn.lane, nowMs);
+                autoMissThisFrame++;
+            } else if (!spawnNote(sn, songTime)) {
+                break;
+            }
+            nextIdx++;
+        }
     }
 
     // ------------------------------------------------------------
@@ -87,6 +95,7 @@ struct NoteManager {
     //  Donus: verilen derece (GRADE_NONE = seritte nota yok, yoksay)
     // ------------------------------------------------------------
     HitGrade press(uint8_t lane, uint32_t songTime, unsigned long nowMs) {
+        if (dead()) return GRADE_NONE;
         int   bestIdx = -1;
         float bestAbs = 1e9f;
         for (int i = 0; i < MAX_NOTES; i++) {
@@ -163,17 +172,17 @@ struct NoteManager {
 
 private:
     // Havuzdan bos yuva bul, notayi yerlestir
-    void spawnNote(const SongNote &sn) {
+    bool spawnNote(const SongNote &sn, uint32_t songTime) {
         for (int i = 0; i < MAX_NOTES; i++) {
             if (!pool[i].active) {
                 pool[i].lane = sn.lane;
-                pool[i].y = SPAWN_Y;
+                pool[i].y = (float)HIT_Y - ((float)sn.timeMs - (float)songTime) * song->speed / 1000.0f;
                 pool[i].targetTime = sn.timeMs;
                 pool[i].active = true;
                 pool[i].hit = false;
-                return;
+                return true;
             }
         }
-        // Havuz dolu (olmamali — MAX_NOTES yogun sarkiya gore secildi)
+        return false;   // sonraki karede ayni chart notasi tekrar denenir
     }
 };

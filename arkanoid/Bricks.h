@@ -67,10 +67,19 @@ public:
                     } else if (wasOutH && !wasOutV) {
                         outBounceX = true;
                         outBounceY = false;
-                    } else {
+                    } else if (wasOutV && wasOutH) {
                         // Kose carpismasi — her iki eksende sek
                         outBounceX = true;
                         outBounceY = true;
+                    } else {
+                        // Adjacent bricks can already overlap the previous circle.
+                        // Reflect along the nearest face rather than reversing both axes.
+                        float penetrationX = fminf(bx + BALL_RADIUS - bwx,
+                            bwx + BRICK_W + BALL_RADIUS - bx);
+                        float penetrationY = fminf(by + BALL_RADIUS - bwy,
+                            bwy + BRICK_H + BALL_RADIUS - by);
+                        outBounceX = penetrationX < penetrationY;
+                        outBounceY = !outBounceX;
                     }
                     return true;
                 }
@@ -80,6 +89,8 @@ public:
     }
 
     int breakAt(int r, int c) {
+        if (r < 0 || r >= BRICK_ROWS || c < 0 || c >= BRICK_COLS || !alive[r][c])
+            return 0;
         alive[r][c] = false;
         count--;
         return BRICK_POINTS[r];

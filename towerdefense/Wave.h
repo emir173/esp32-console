@@ -163,6 +163,7 @@ inline int waveBonus() {
 inline bool canCallNextWave() {
     return waveRunning
         && spawnGroupIdx >= waveGroupCount          // Mevcut dalganın tüm grupları çıktı
+        && aliveEnemyCount() > 0                   // Temiz dalgayı atlayıp bedava bonus alma
         && waveNum < TOTAL_WAVES
         && (waveNum % WAVES_PER_LEVEL) != 0;        // Bölümün son dalgası değil
 }

@@ -10,8 +10,9 @@
 //    BTN_D/A/C/B -> Serit 1/2/3/4 vurus (soldan saga)
 //    JOY_SW      -> Pause toggle
 //    JOY Y       -> Menude sarki secimi
-//    BTN_A       -> Menude baslat / sonucta menuye don
-//    BTN_B       -> OS Launcher'a don
+//    BTN_A       -> Menude baslat / sonucta yeniden oyna
+//    BTN_B       -> Oyun menusu (ana menude OS Launcher)
+//    BTN_C       -> Pause/sonucta OS Launcher'a don
 // ============================================================
 #include <TFT_eSPI.h>
 #include <SPI.h>
@@ -25,6 +26,7 @@
 #include "Songs.h"
 #include "NoteManager.h"
 #include "Renderer.h"
+#include "Input.h"
 #include "../SharedJoystick.h"
 
 // ============ Display Objects ============
@@ -45,6 +47,7 @@ bool newRecord = false;
 // ============ Song Time ============
 // Sarki zamani SADECE ST_PLAYING'de ilerler -> pause dogal olarak durur
 uint32_t songTime = 0;         // ms, sarki basindan
+uint32_t lastSongMs = 0;       // gercek saat; kare sinirindan bagimsiz
 unsigned long readyStartMs = 0;   // geri sayim baslangici
 int lastCountStep = -1;           // geri sayim ses tetigi
 
@@ -86,8 +89,8 @@ int currentFPS = 0;
 bool showFps = false;
 
 // ============ Buttons ============
-int prevLane[LANE_COUNT] = { HIGH, HIGH, HIGH, HIGH };   // 4 serit butonu
-int prevBtnA = HIGH;
+RhythmButton laneButtons[LANE_COUNT];
+RhythmButton joyButton;
 int lastFrameDir = -1;         // joystick menu kenar tespiti
 
 // ============ Sound ============
@@ -121,6 +124,17 @@ void saveBestIfRecord() {
     }
 }
 
+void enterGameMenu() {
+    saveBestIfRecord();
+    osBuzzerOff();
+    shake.reset();
+    flashUntil = 0;
+    joystick.reset();
+    lastFrameDir = -1;
+    state = ST_MENU;
+    updateOLED(true);
+}
+
 void returnToOS() {
     saveBestIfRecord();   // yarim kalan run'in rekoru kaybolmasin
     oled.clearDisplay();
@@ -136,8 +150,7 @@ void returnToOS() {
     tft.print("Standalone: no OS");
     delay(STANDALONE_MSG_MS);
     tft.fillScreen(TFT_BLACK);
-    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
+    enterGameMenu();
 }
 
 // ============================================================
@@ -146,11 +159,16 @@ void returnToOS() {
 void updateOLED(bool force) {
     static long lastScore = -1;
     static int lastCombo = -1, lastHealth = -1;
+    static long lastBest = -1;
+    static int lastSong = -1;
     if (!force && noteMgr.score == lastScore &&
-        noteMgr.combo == lastCombo && noteMgr.health == lastHealth) return;
+        noteMgr.combo == lastCombo && noteMgr.health == lastHealth &&
+        best == lastBest && selSong == lastSong) return;
     lastScore = noteMgr.score;
     lastCombo = noteMgr.combo;
     lastHealth = noteMgr.health;
+    lastBest = best;
+    lastSong = selSong;
 
     char buf[28];
     oled.clearBuffer();
@@ -178,17 +196,22 @@ void updateOLED(bool force) {
 // ============================================================
 void updateMelody(unsigned long now) {
     const SongInfo *s = noteMgr.song;
-    uint32_t due = melody.loopStart + s->melody[melody.idx].timeMs;
-    if (songTime < due) return;
-
-    // Notanin sirasi geldi — cakisma yoksa cal
-    if (now >= sfxUntil && songTime >= melody.muteUntil) {
-        playSound(s->melody[melody.idx].freq, s->melody[melody.idx].dur);
-    }
-    melody.idx++;
-    if (melody.idx >= s->melCount) {
+    uint32_t loopStart = songTime / s->melLoopMs * s->melLoopMs;
+    if (loopStart != melody.loopStart) {
+        melody.loopStart = loopStart;
         melody.idx = 0;
-        melody.loopStart += s->melLoopMs;
+    }
+    int latest = -1;
+    while (melody.idx < s->melCount &&
+           melody.loopStart + s->melody[melody.idx].timeMs <= songTime) {
+        latest = melody.idx++;
+    }
+    if (latest < 0) return;
+    const MelNote &n = s->melody[latest];
+    uint32_t age = songTime - (melody.loopStart + n.timeMs);
+    // Geciken notalari arka arkaya calma; yalniz hala suren tonu cal.
+    if ((int32_t)(now - sfxUntil) >= 0 && songTime >= melody.muteUntil && age < n.dur) {
+        playSound(n.freq, n.dur - age);
     }
 }
 
@@ -202,6 +225,7 @@ void startSong() {
     newRecord = false;
     shake.reset();
     flashUntil = 0;
+    sfxUntil = millis();
     readyStartMs = millis();
     lastCountStep = -1;
     state = ST_READY;
@@ -306,8 +330,11 @@ void setup() {
 
     randomSeed(analogRead(JOY_Y) ^ (analogRead(JOY_X) << 8) ^ micros());
 
-    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
+    for (int i = 0; i < LANE_COUNT; i++) {
+        laneButtons[i].reset(digitalRead(LANE_PINS[i]), millis());
+    }
+    joyButton.reset(digitalRead(JOY_SW), millis());
+    enterGameMenu();
     lastFrameMs = millis();
     fpsStartTime = millis();
 }
@@ -316,26 +343,28 @@ void setup() {
 //  LOOP
 // ============================================================
 void loop() {
+    unsigned long now = millis();
+    for (int i = 0; i < LANE_COUNT; i++) {
+        laneButtons[i].update(digitalRead(LANE_PINS[i]), now);
+    }
+    joyButton.update(digitalRead(JOY_SW), now);
     // ---- JOY_SW: Pause toggle (kenar tespiti) ----
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
+    if (joyButton.takePress()) {
         if (state == ST_PLAYING) {
+            songTime += now - lastSongMs;
+            lastSongMs = now;
             state = ST_PAUSE;
             osBuzzerOff();            // calan melodi/sfx pause'da kalmasin
             playSound(NOTE_G4, 50);
         } else if (state == ST_PAUSE) {
             state = ST_PLAYING;
+            lastSongMs = now;
             playSound(NOTE_D5, 40);
         }
     }
-    prevJoySw = currJoySw;
 
     // ---- Kare hizi siniri (60 FPS) ----
-    unsigned long now = millis();
     if (now - lastFrameMs < FRAME_MS) return;
-    unsigned long elapsed = now - lastFrameMs;
-    if (elapsed > 50) elapsed = 50;   // lag spike korumasi
     lastFrameMs = now;
 
     // ---- FPS sayaci ----
@@ -346,20 +375,16 @@ void loop() {
         fpsStartTime = now;
     }
 
-    // ---- BTN_A kenar tespiti (menu/sonuc ekranlari) ----
-    int btnA = digitalRead(BTN_A);
-    bool pressA = (btnA == LOW && prevBtnA == HIGH);
-    prevBtnA = btnA;
-
     // ---- 4 serit butonu: kenar tespiti + basili maske ----
     bool lanePress[LANE_COUNT];
     uint8_t pressedMask = 0;
     for (int i = 0; i < LANE_COUNT; i++) {
-        int v = digitalRead(LANE_PINS[i]);
-        lanePress[i] = (v == LOW && prevLane[i] == HIGH);
-        if (v == LOW) pressedMask |= (1 << i);
-        prevLane[i] = v;
+        lanePress[i] = laneButtons[i].takePress();
+        if (laneButtons[i].stable == LOW) pressedMask |= (1 << i);
     }
+    bool pressA = lanePress[1];
+    bool pressB = lanePress[3];
+    bool pressC = lanePress[2];
 
     switch (state) {
 
@@ -374,9 +399,11 @@ void loop() {
             if (dirEdge && dir == DIR_UP) {
                 selSong = (selSong + SONG_COUNT - 1) % SONG_COUNT;
                 playSound(NOTE_F4, 25);
+                updateOLED(false);
             } else if (dirEdge && dir == DIR_DOWN) {
                 selSong = (selSong + 1) % SONG_COUNT;
                 playSound(NOTE_F4, 25);
+                updateOLED(false);
             }
 
             if (pressA) {
@@ -384,7 +411,7 @@ void loop() {
                 startSong();
                 break;
             }
-            if (!digitalRead(BTN_B)) {
+            if (pressB) {
                 returnToOS();
                 break;
             }
@@ -407,6 +434,7 @@ void loop() {
             if (step > 3) {
                 state = ST_PLAYING;
                 songTime = 0;
+                lastSongMs = now;
                 break;
             }
 
@@ -422,7 +450,8 @@ void loop() {
         //  PLAYING — ana oyun dongusu
         // ======================================
         case ST_PLAYING: {
-            songTime += elapsed;   // sarki zamani sadece burada ilerler
+            songTime += now - lastSongMs;
+            lastSongMs = now;
 
             // Nota spawn + otomatik miss
             noteMgr.update(songTime, now);
@@ -432,6 +461,7 @@ void loop() {
 
             // Serit vuruslari
             for (int i = 0; i < LANE_COUNT; i++) {
+                if (noteMgr.dead()) break;
                 if (!lanePress[i]) continue;
                 HitGrade g = noteMgr.press((uint8_t)i, songTime, now);
                 if (g != GRADE_NONE) applyGradeFeedback(g, now);
@@ -461,7 +491,7 @@ void loop() {
             }
 
             drawPlayScene(canvas, noteMgr, songTime, pressedMask,
-                          now < flashUntil, now);
+                          flashUntil != 0 && (int32_t)(flashUntil - now) > 0, now);
             if (showFps) {
                 canvas.setTextSize(1);
                 canvas.setTextColor(COL_GRAY_TXT);
@@ -499,12 +529,10 @@ void loop() {
             if (now - resultMs > RESULT_LOCK_MS) {
                 if (pressA) {
                     playSound(NOTE_D5, 50);
-                    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-                } else if (!digitalRead(BTN_B)) {
-                    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-                } else if (!digitalRead(BTN_C)) {
+                    startSong();
+                } else if (pressB) {
+                    enterGameMenu();
+                } else if (pressC) {
                     returnToOS();
                 }
             }
@@ -534,12 +562,10 @@ void loop() {
             if (now - resultMs > RESULT_LOCK_MS) {
                 if (pressA) {
                     playSound(NOTE_D5, 50);
-                    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-                } else if (!digitalRead(BTN_B)) {
-                    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-                } else if (!digitalRead(BTN_C)) {
+                    startSong();
+                } else if (pressB) {
+                    enterGameMenu();
+                } else if (pressC) {
                     returnToOS();
                 }
             }
@@ -558,14 +584,10 @@ void loop() {
             if (pressA) {
                 playSound(NOTE_D5, 40);
                 state = ST_PLAYING;
-                lastFrameMs = millis();
-            }
-            if (!digitalRead(BTN_B)) {
-                playSound(NOTE_G4, 50);
-                state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-            }
-            if (!digitalRead(BTN_C)) {
+                lastSongMs = millis();
+            } else if (pressB) {
+                enterGameMenu();
+            } else if (pressC) {
                 playSound(NOTE_G4, 50);
                 returnToOS();
             }

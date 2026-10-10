@@ -18,6 +18,8 @@
 #include "flight_internal.h"
 #include <SPI.h>
 #include <SD.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 
 // ══════════════════════════════════════════════════════════════
 //  GLOBAL DEFINITIONS
@@ -35,15 +37,15 @@ bool      g_soundEnabled = true;
 int       g_selectedIdx = -1;
 int       g_joyCenterX = 0;
 int       g_joyCenterY = 0;
-bool      g_dataValid = false;
+std::atomic<bool> g_dataValid{false};
 uint32_t  g_lastUpdate_ms = 0;
-bool      g_polling = false;       // UPDATING indicator during poll
+std::atomic<bool> g_polling{false}; // UPDATING indicator during poll
 SemaphoreHandle_t g_aircraftMutex = NULL;
 TaskHandle_t g_fetchTaskHandle = NULL;
 
 // ─── Poll timer ───
 static uint32_t s_lastPoll = 0;
-static bool     s_firstPollDone = false;
+static bool     s_ready = false;
 
 // ─── Render timer ───
 static uint32_t s_lastRender = 0;
@@ -52,15 +54,47 @@ void netFetchTask(void *pvParameters) {
     while (1) {
         if (millis() - s_lastPoll > POLL_INTERVAL_MS && netIsConnected()) {
             g_polling = true;
-            bool ok = netFetchAircraft();
+            netFetchAircraft();
             g_polling = false;
             s_lastPoll = millis();
-            if (ok) {
-                s_firstPollDone = true;
-            }
         }
         vTaskDelay(100 / portTICK_PERIOD_MS); // Check every 100ms
     }
+}
+
+// Only publish a map pointer after the whole, correctly sized file is loaded.
+static uint16_t* loadMap(const char* path, size_t expectedBytes) {
+    File f = SD.open(path, FILE_READ);
+    if (!f || f.size() != expectedBytes) {
+        Serial.printf("[SETUP] %s missing/invalid (expected %u bytes, got %u)\n",
+                      path, (unsigned)expectedBytes, (unsigned)(f ? f.size() : 0));
+        return nullptr;
+    }
+    uint8_t* dst = (uint8_t*)heap_caps_malloc(expectedBytes,
+                                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!dst) {
+        Serial.printf("[SETUP] No PSRAM for %s\n", path);
+        return nullptr;
+    }
+    size_t offset = 0;
+    uint32_t started = millis();
+    while (offset < expectedBytes) {
+        size_t chunk = expectedBytes - offset;
+        if (chunk > 65536) chunk = 65536;
+        size_t got = f.read(dst + offset, chunk);
+        if (!got) break;
+        offset += got;
+        vTaskDelay(1);
+    }
+    if (offset != expectedBytes) {
+        Serial.printf("[SETUP] %s short read: %u/%u\n", path,
+                      (unsigned)offset, (unsigned)expectedBytes);
+        heap_caps_free(dst);
+        return nullptr;
+    }
+    Serial.printf("[SETUP] %s loaded: %u bytes (%.2f s)\n", path,
+                  (unsigned)offset, (millis() - started) / 1000.0);
+    return (uint16_t*)dst;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -76,6 +110,12 @@ void setup() {
     Serial.println("  ESP32 FLIGHT TRACKER starting...");
     Serial.println("==================================");
     Serial.flush();
+    Serial.printf("[DEBUG] Reset reason: %d | heap: %u | PSRAM: %u\n",
+                  (int)esp_reset_reason(), ESP.getFreeHeap(), ESP.getFreePsram());
+    if (!g_aircraftMutex) {
+        Serial.println("[SETUP] FATAL: aircraft mutex allocation failed");
+        return;
+    }
 
     // ─── Pin modes ───
     pinMode(BTN_A, INPUT_PULLUP);
@@ -83,8 +123,7 @@ void setup() {
     pinMode(BTN_C, INPUT_PULLUP);
     pinMode(BTN_D, INPUT_PULLUP);
     pinMode(JOY_SW, INPUT_PULLUP);
-    pinMode(BUZZER, OUTPUT);
-    digitalWrite(BUZZER, LOW);
+    osInitBuzzer();
     pinMode(TFT_CS, OUTPUT); digitalWrite(TFT_CS, HIGH);
     pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
     
@@ -114,53 +153,8 @@ void setup() {
     if (sdOk) {
         Serial.println("[SETUP] SD Card OK");
 
-        // Regional map (2560x1280, 6.5MB) — DIRECT to PSRAM, 64KB chunk
-        // NO intermediate buffer (no memcpy overhead), vTaskDelay gives time to WiFi task
-        if (SD.exists("/regional.bin")) {
-            File f = SD.open("/regional.bin", FILE_READ);
-            size_t mapSize = f.size();
-            Serial.printf("[SETUP] Regional map: %d bytes\n", mapSize);
-            // 32-bit aligned: memcpy uses word-aligned optimizations
-            g_psramMap = (uint16_t*)heap_caps_malloc(mapSize, 
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
-            if (g_psramMap) {
-                uint32_t mapStart = millis();
-                size_t offset = 0;
-                uint8_t *dst = (uint8_t*)g_psramMap;
-                while (offset < mapSize) {
-                    // 64KB chunk — larger chunk = less SPI command overhead
-                    size_t chunk = (mapSize - offset < 65536) ? (mapSize - offset) : 65536;
-                    size_t got = f.read(dst + offset, chunk);
-                    offset += got;
-                    if (got == 0) break;
-                    vTaskDelay(1);  // Feed WDT + advance WiFi task
-                }
-                Serial.printf("[SETUP] Regional loaded to PSRAM (%.2f s)\n",
-                              (millis() - mapStart) / 1000.0);
-            } else {
-                Serial.println("[SETUP] ERROR: Insufficient PSRAM for Regional map!");
-            }
-            f.close();
-        } else {
-            Serial.println("[SETUP] /regional.bin not found!");
-        }
-        // World map (512x256, 256KB)
-        if (SD.exists("/world.bin")) {
-            File f = SD.open("/world.bin", FILE_READ);
-            size_t mapSize = f.size();
-            Serial.printf("[SETUP] World map: %d bytes\n", mapSize);
-            g_psramMapWorld = (uint16_t*)heap_caps_malloc(mapSize, 
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
-            if (g_psramMapWorld) {
-                f.read((uint8_t*)g_psramMapWorld, mapSize);
-                Serial.println("[SETUP] World map loaded to PSRAM.");
-            } else {
-                Serial.println("[SETUP] ERROR: Insufficient PSRAM for World map!");
-            }
-            f.close();
-        } else {
-            Serial.println("[SETUP] /world.bin not found!");
-        }
+        g_psramMap = loadMap("/regional.bin", (size_t)REG_MAP_W * REG_MAP_H * sizeof(uint16_t));
+        g_psramMapWorld = loadMap("/world.bin", (size_t)WORLD_MAP_W * WORLD_MAP_H * sizeof(uint16_t));
         SD.end(); 
         pinMode(SD_CS, OUTPUT);
         digitalWrite(SD_CS, HIGH);
@@ -177,7 +171,10 @@ void setup() {
     // Create Sprite (160x128 = 40KB RAM)
     Serial.println("[DEBUG] Creating sprite...");
     void* ptr = spr.createSprite(160, 128);
-    if (!ptr) Serial.println("[DEBUG] ERROR: Insufficient RAM for sprite!");
+    if (!ptr) {
+        Serial.println("[SETUP] FATAL: Insufficient RAM for sprite");
+        return;
+    }
     spr.setSwapBytes(true); 
     
     Serial.println("[SETUP] TFT OK");
@@ -219,7 +216,6 @@ void setup() {
     if (netIsConnected()) {
         Serial.println("[SETUP] First OpenSky poll starting...");
         if (netFetchAircraft()) {
-            s_firstPollDone = true;
             Serial.println("[SETUP] First poll SUCCESSFUL");
         } else {
             Serial.println("[SETUP] First poll FAILED");
@@ -229,7 +225,7 @@ void setup() {
     }
 
     // ─── First screen ───
-    if (s_firstPollDone) {
+    if (g_dataValid) {
         renderDrawAll();  // Map + aircraft
     } else if (!g_psramMap && !g_psramMapWorld) {
         renderDrawOffline();  // Offline screen if no map
@@ -241,7 +237,7 @@ void setup() {
     s_lastRender = millis();
 
     // Start background fetch task on Core 0
-    xTaskCreatePinnedToCore(
+    BaseType_t taskResult = xTaskCreatePinnedToCore(
         netFetchTask,
         "NetFetchTask",
         16384, // WiFiClientSecure requires large stack!
@@ -250,6 +246,10 @@ void setup() {
         &g_fetchTaskHandle,
         0     // Core 0 (Network operations)
     );
+    if (taskResult != pdPASS) {
+        Serial.println("[SETUP] ERROR: NetFetchTask creation failed; no automatic polls");
+    }
+    s_ready = true;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -260,6 +260,10 @@ void setup() {
 //  4. Update OLED
 // ══════════════════════════════════════════════════════════════
 void loop() {
+    if (!s_ready) {
+        delay(100);
+        return;
+    }
     uint32_t now = millis();
 
     // ─── 1. WiFi maintain ───
@@ -270,14 +274,10 @@ void loop() {
     ctrlHandleButtons();
 
     // ─── 3. TFT render (If map is loaded) ───
-    if (now - s_lastRender >= 100) { // 10 FPS limit
-        if (g_psramMap || g_psramMapWorld) {
-            if (s_firstPollDone) {
-                renderDrawAll();
-            } else {
-                renderDrawOffline();
-            }
-        }
+    if (now - s_lastRender >= RENDER_INTERVAL_MS) {
+        // A missing SD/map must not freeze the screen or hide valid aircraft.
+        if (g_dataValid || g_psramMap || g_psramMapWorld) renderDrawAll();
+        else renderDrawOffline();
         s_lastRender = now;
     }
 

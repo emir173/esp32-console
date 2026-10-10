@@ -1,10 +1,12 @@
 #pragma once
 
+#include <math.h>
 #include "Config.h"
 #include "Snake.h"
 
 struct FoodManager {
     int foodX, foodY;
+    bool foodActive;
     FoodType foodType;
     int poisonX, poisonY;
     bool poisonActive;
@@ -13,6 +15,9 @@ struct FoodManager {
     unsigned long spawnMs;
 
     void init() {
+        foodActive = false;
+        foodX = foodY = -1;
+        foodType = FOOD_NORMAL;
         poisonActive = false;
         poisonX = -1;
         poisonY = -1;
@@ -32,8 +37,26 @@ struct FoodManager {
         return false;
     }
 
-    void spawnFood(const Snake& snake, int level, int comboCount, int arenaInset) {
-        if (snake.len >= COLS * ROWS - 1) return;
+    // Tum hucreleri tara; dolu hucreye dusme ve 1000 deneme siniri yok.
+    bool findFreeCell(const Snake& snake, int level, int arenaInset,
+                      int avoidX, int avoidY, int& outX, int& outY) const {
+        int freeCount = 0;
+        for (int gy = arenaInset; gy < ROWS - arenaInset; gy++) {
+            for (int gx = arenaInset; gx < COLS - arenaInset; gx++) {
+                if (snake.isOnCell(gx, gy) || isObstacle(gx, gy, level, arenaInset) ||
+                    (gx == avoidX && gy == avoidY)) continue;
+                // Reservoir sampling: her bos hucre esit olasilikla secilir.
+                if (random(++freeCount) == 0) {
+                    outX = gx;
+                    outY = gy;
+                }
+            }
+        }
+        return freeCount > 0;
+    }
+
+    bool spawnFood(const Snake& snake, int level, int comboCount, int arenaInset) {
+        foodActive = false;
 
         bool placed = false;
 
@@ -61,16 +84,20 @@ struct FoodManager {
 
         // Rastgele (combo yoksa veya stratejik yer doluysa)
         if (!placed) {
-            int tries = 0;
-            do {
-                foodX = random(arenaInset, COLS - arenaInset);
-                foodY = random(arenaInset, ROWS - arenaInset);
-                tries++;
-            } while (tries < 1000 &&
-                     (snake.isOnCell(foodX, foodY) ||
-                      isObstacle(foodX, foodY, level, arenaInset) ||
-                      (poisonActive && foodX == poisonX && foodY == poisonY)));
+            placed = findFreeCell(snake, level, arenaInset,
+                                 poisonActive ? poisonX : -1,
+                                 poisonActive ? poisonY : -1, foodX, foodY);
+            // Son bos hucre zehirse ilerlemeyi engellemesin.
+            if (!placed && poisonActive) {
+                poisonActive = false;
+                placed = findFreeCell(snake, level, arenaInset, -1, -1, foodX, foodY);
+            }
         }
+        if (!placed) {
+            foodX = foodY = -1;
+            return false;
+        }
+        foodActive = true;
 
         // Tur belirle: %5 power-up, geri kalan %65 normal / %35 gold
         int r = random(0, 100);
@@ -90,9 +117,20 @@ struct FoodManager {
         foodPixelY = OFFSET_Y + foodY * GRID + GRID / 2.0f;
         
         spawnMs = millis();
+        return true;
+    }
+
+    // Daralma / yeni engel sonrasi yiyecekler erisilebilir alanda kalsin.
+    bool validatePlacement(const Snake& snake, int level, int comboCount, int arenaInset) {
+        if (poisonActive && isObstacle(poisonX, poisonY, level, arenaInset))
+            poisonActive = false;
+        if (!foodActive || isObstacle(foodX, foodY, level, arenaInset))
+            return spawnFood(snake, level, comboCount, arenaInset);
+        return true;
     }
 
     void updateMagnetPixels(int headGx, int headGy, bool magnetActive, float dt) {
+        if (!foodActive) return;
         if (foodPixelX < 0.0f) {
             foodPixelX = foodX * GRID + GRID / 2.0f;
             foodPixelY = OFFSET_Y + foodY * GRID + GRID / 2.0f;
@@ -121,18 +159,10 @@ struct FoodManager {
     }
 
     void spawnPoison(const Snake& snake, int level, int arenaInset) {
-        int tries = 0;
-        do {
-            poisonX = random(arenaInset, COLS - arenaInset);
-            poisonY = random(arenaInset, ROWS - arenaInset);
-            tries++;
-        } while (tries < 1000 &&
-                 (snake.isOnCell(poisonX, poisonY) ||
-                  isObstacle(poisonX, poisonY, level, arenaInset) ||
-                  (poisonX == foodX && poisonY == foodY)));
-
-        poisonActive = true;
-        poisonSpawnMs = millis();
+        poisonActive = findFreeCell(snake, level, arenaInset,
+                                    foodActive ? foodX : -1,
+                                    foodActive ? foodY : -1, poisonX, poisonY);
+        if (poisonActive) poisonSpawnMs = millis();
     }
 
     void updatePoison() {

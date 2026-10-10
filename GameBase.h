@@ -21,6 +21,9 @@
 #include <esp_ota_ops.h>
 #include <Preferences.h>
 #include <esp_timer.h>
+#include <Wire.h>
+#include <freertos/semphr.h>
+#include <string.h>
 
 // ============================================================
 //  NOTE_* — Standart müzik notaları (Hz, A4=440 akort)
@@ -138,12 +141,26 @@ static const uint16_t OS_DUTY_LOW   = 256;   // %25 duty (kisik) = -3dB, HIGH'a 
                                              // doom vb. darbeli sesler cilizlasir.
 static const uint16_t OS_DUTY_HIGH  = 512;   // ~%50 duty  (yuksek = eski ses = tone())
 
-static uint8_t            osSoundVolume = 2;         // 0/1/2 (ilk tonda NVS'ten yuklenir)
-static bool               osAudioReady  = false;
-static esp_timer_handle_t osToneTimer   = nullptr;
+// Inline state is shared by every translation unit (including Flight's .cpp files).
+inline uint8_t            osSoundVolume = 2;
+inline bool               osAudioReady  = false;
+inline esp_timer_handle_t osToneTimer   = nullptr;
+inline SemaphoreHandle_t osAudioMutex  = nullptr;
+inline bool               osToneTimed   = false;
+inline bool               osToneActive  = false;
+inline int64_t            osToneEndUs   = 0;
 
-// Suredolunca cagrilir → buzzer'i sustur (non-blocking oto-durdurma)
-static void osToneStopCb(void *) { ledcWrite(BUZZER, 0); }
+// A periodic expiry check avoids stop/restart races with an old callback.
+// The timer task never waits for the audio mutex; a busy check retries next tick.
+inline void osToneStopCb(void *) {
+    if (xSemaphoreTake(osAudioMutex, 0) != pdTRUE) return;
+    if (osToneTimed && esp_timer_get_time() >= osToneEndUs) {
+        ledcWrite(BUZZER, 0);
+        osToneTimed = false;
+        osToneActive = false;
+    }
+    xSemaphoreGive(osAudioMutex);
+}
 
 // Aktif ses seviyesine karsilik gelen duty (0 = kapali)
 inline uint16_t osCurrentDuty() {
@@ -159,19 +176,39 @@ inline uint16_t osCurrentDuty() {
 // ------------------------------------------------------------
 inline void osAudioInit() {
     if (osAudioReady) return;
+    // setup()/the main loop initializes audio before any other task uses it.
+    if (!osAudioMutex) osAudioMutex = xSemaphoreCreateMutex();
+    if (!osAudioMutex) { log_e("Audio mutex allocation failed"); return; }
+    xSemaphoreTake(osAudioMutex, portMAX_DELAY);
+    if (osAudioReady) { xSemaphoreGive(osAudioMutex); return; }
     Preferences prefs;
-    prefs.begin("os", true);
-    osSoundVolume = prefs.getUChar("snd_vol", 2);
-    prefs.end();
+    if (prefs.begin("os", true)) {
+        osSoundVolume = prefs.getUChar("snd_vol", 2);
+        prefs.end();
+    }
+    if (osSoundVolume > 2) osSoundVolume = 2;
 
-    ledcAttach(BUZZER, 2000, OS_BUZZER_RES);   // frekans ton basina degistirilir
+    if (!ledcAttach(BUZZER, 2000, OS_BUZZER_RES)) {
+        log_e("Buzzer LEDC attach failed");
+        xSemaphoreGive(osAudioMutex);
+        return;
+    }
+    ledcWrite(BUZZER, 0);
 
     esp_timer_create_args_t args = {};
     args.callback = &osToneStopCb;
     args.name     = "ostone";
-    esp_timer_create(&args, &osToneTimer);
-
-    osAudioReady = true;
+    esp_err_t err = esp_timer_create(&args, &osToneTimer);
+    if (err == ESP_OK) err = esp_timer_start_periodic(osToneTimer, 5000);
+    if (err != ESP_OK) {
+        log_e("Audio timer init failed: %d", (int)err);
+        if (osToneTimer) esp_timer_delete(osToneTimer);
+        osToneTimer = nullptr;
+        ledcDetach(BUZZER);
+    } else {
+        osAudioReady = true;
+    }
+    xSemaphoreGive(osAudioMutex);
 }
 
 // ------------------------------------------------------------
@@ -180,13 +217,19 @@ inline void osAudioInit() {
 // ------------------------------------------------------------
 inline void osBuzzerPlay(uint16_t freq, uint32_t dur) {
     osAudioInit();
-    if (osSoundVolume == 0 || freq == 0) { ledcWrite(BUZZER, 0); return; }
-    ledcWriteTone(BUZZER, freq);          // frekansi ayarla (duty'yi %50 yapar)
-    ledcWrite(BUZZER, osCurrentDuty());   // duty'yi volume icin override et
-    if (osToneTimer) {
-        esp_timer_stop(osToneTimer);      // onceki tonu iptal et (yeniden baslat)
-        esp_timer_start_once(osToneTimer, (uint64_t)dur * 1000ULL);
+    if (!osAudioReady) return;
+    xSemaphoreTake(osAudioMutex, portMAX_DELAY);
+    osToneTimed = false;
+    osToneActive = false;
+    if (osSoundVolume == 0 || freq == 0 || dur == 0 ||
+        ledcWriteTone(BUZZER, freq) == 0 || !ledcWrite(BUZZER, osCurrentDuty())) {
+        ledcWrite(BUZZER, 0);
+    } else {
+        osToneEndUs = esp_timer_get_time() + (int64_t)dur * 1000;
+        osToneTimed = true;
+        osToneActive = true;
     }
+    xSemaphoreGive(osAudioMutex);
 }
 
 // ------------------------------------------------------------
@@ -195,10 +238,17 @@ inline void osBuzzerPlay(uint16_t freq, uint32_t dur) {
 // ------------------------------------------------------------
 inline void osBuzzerTone(uint16_t freq) {
     osAudioInit();
-    if (osSoundVolume == 0 || freq == 0) { ledcWrite(BUZZER, 0); return; }
-    if (osToneTimer) esp_timer_stop(osToneTimer);   // surekli ton: oto-stop iptal
-    ledcWriteTone(BUZZER, freq);
-    ledcWrite(BUZZER, osCurrentDuty());
+    if (!osAudioReady) return;
+    xSemaphoreTake(osAudioMutex, portMAX_DELAY);
+    osToneTimed = false;
+    osToneActive = false;
+    if (osSoundVolume == 0 || freq == 0 ||
+        ledcWriteTone(BUZZER, freq) == 0 || !ledcWrite(BUZZER, osCurrentDuty())) {
+        ledcWrite(BUZZER, 0);
+    } else {
+        osToneActive = true;
+    }
+    xSemaphoreGive(osAudioMutex);
 }
 
 // ------------------------------------------------------------
@@ -206,8 +256,11 @@ inline void osBuzzerTone(uint16_t freq) {
 // ------------------------------------------------------------
 inline void osBuzzerOff() {
     if (!osAudioReady) return;            // hic ses calmadiysa zaten sessiz
-    if (osToneTimer) esp_timer_stop(osToneTimer);
+    xSemaphoreTake(osAudioMutex, portMAX_DELAY);
+    osToneTimed = false;
+    osToneActive = false;
     ledcWrite(BUZZER, 0);
+    xSemaphoreGive(osAudioMutex);
 }
 
 // ------------------------------------------------------------
@@ -216,25 +269,36 @@ inline void osBuzzerOff() {
 // ------------------------------------------------------------
 inline uint8_t osLoadVolume(uint8_t defaultVal = 2) {
     Preferences prefs;
-    prefs.begin("os", true);
+    if (!prefs.begin("os", true)) return defaultVal > 2 ? 2 : defaultVal;
     uint8_t v = prefs.getUChar("snd_vol", defaultVal);
     prefs.end();
-    return v;
+    return v > 2 ? 2 : v;
 }
-inline void osSaveVolume(uint8_t vol) {
+inline bool osSaveVolume(uint8_t vol) {
+    if (vol > 2) vol = 2;
     Preferences prefs;
-    prefs.begin("os", false);
-    prefs.putUChar("snd_vol", vol);
+    if (!prefs.begin("os", false)) { log_e("Volume NVS open failed"); return false; }
+    bool saved = prefs.putUChar("snd_vol", vol) == sizeof(uint8_t);
     prefs.end();
+    if (!saved) log_e("Volume save failed");
+    return saved;
 }
-inline void osSetVolume(uint8_t vol) { osSoundVolume = vol; }
+inline void osSetVolume(uint8_t vol) {
+    osAudioInit();
+    if (!osAudioReady) { osSoundVolume = vol > 2 ? 2 : vol; return; }
+    xSemaphoreTake(osAudioMutex, portMAX_DELAY);
+    osSoundVolume = vol > 2 ? 2 : vol;
+    if (osSoundVolume == 0) { osToneTimed = false; osToneActive = false; }
+    ledcWrite(BUZZER, osToneActive ? osCurrentDuty() : 0);
+    xSemaphoreGive(osAudioMutex);
+}
 
 // ============================================================
 //  osReturnToOS — OS Launcher'a dönüş
 //  Ekranı temizler, mesaj gösterir, OTA partition'a geçip restart eder.
 //  tft: Oyunun TFT_eSPI nesnesi
 // ============================================================
-inline void osReturnToOS(TFT_eSPI &tft, bool playExitSound = false) {
+inline bool osReturnToOS(TFT_eSPI &tft, bool playExitSound = false) {
     if (playExitSound) osBuzzerPlay(400, 50);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_WHITE);
@@ -242,14 +306,24 @@ inline void osReturnToOS(TFT_eSPI &tft, bool playExitSound = false) {
     tft.setCursor(26, 60);
     tft.print("Returning to OS...");
     delay(500);
-    const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
-    if (os_part) { esp_ota_set_boot_partition(os_part); }
+    osBuzzerOff();
+    const esp_partition_t *os_part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+    if (!os_part || esp_ota_set_boot_partition(os_part) != ESP_OK) {
+        tft.fillScreen(TFT_BLACK);
+        tft.setCursor(8, 55);
+        tft.print("OS boot failed");
+        log_e("OS partition selection failed");
+        delay(1000);
+        return false;
+    }
     ESP.restart();
+    return true;
 }
 
 // ============================================================
 //  osPlaySound — Buzzer üzerinden ton üretir
-//  ESP32'nin tone() fonksiyonu süre parametresini destekler.
+//  Ortak LEDC motoru sure sonunda sesi kapatir (5 ms aralikli timer kontrolu).
 //  freq: Frekans (Hz), dur: Süre (ms), enabled: Ses açık mı
 // ============================================================
 inline void osPlaySound(uint16_t freq, uint32_t dur, bool enabled) {
@@ -259,16 +333,20 @@ inline void osPlaySound(uint16_t freq, uint32_t dur, bool enabled) {
 }
 
 // ============================================================
-//  osPlaySoundManual — Manuel süre kontrolü (ESP32 timer bug workaround)
-//  Bazı ESP32 sürümlerinde tone() süre parametresi çalışmıyor.
-//  Bu versiyon manuel millis() tabanlı süre kontrolü yapar.
+//  osPlaySoundManual — Eski manuel sure API'si icin uyumlu sarmalayici.
+//  Timer da sesi kapatir; ana dongu kayit sirasinda beklese bile ses takilmaz.
 //  soundEndTime: Global uint32_t değişken (oyun tanımlamalı)
 // ============================================================
 inline void osPlaySoundManual(uint16_t freq, uint32_t dur, bool enabled, uint32_t &soundEndTime) {
-    if (enabled) {
-        osBuzzerTone(freq);   // LEDC + volume, surekli — osUpdateSound durdurur
-        soundEndTime = millis() + dur;
+    if (!enabled || freq == 0 || dur == 0) {
+        osBuzzerOff();
+        soundEndTime = 0;
+        return;
     }
+    if (dur > 0x7FFFFFFFUL) dur = 0x7FFFFFFFUL;
+    osBuzzerPlay(freq, dur);
+    soundEndTime = millis() + dur;
+    if (soundEndTime == 0) soundEndTime = 1; // zero is the inactive sentinel
 }
 
 // ============================================================
@@ -277,7 +355,7 @@ inline void osPlaySoundManual(uint16_t freq, uint32_t dur, bool enabled, uint32_
 //  soundEndTime: osPlaySoundManual ile set edilen zaman
 // ============================================================
 inline void osUpdateSound(uint32_t &soundEndTime) {
-    if (soundEndTime > 0 && millis() > soundEndTime) {
+    if (soundEndTime != 0 && (int32_t)(millis() - soundEndTime) >= 0) {
         osBuzzerOff();
         soundEndTime = 0;
     }
@@ -320,6 +398,8 @@ inline void osOLEDOff() {
 //  centerX, centerY: Referans değişkenler (oyun tanımlamalı)
 // ============================================================
 inline void osCalibrateJoystick(int &centerX, int &centerY, int numSamples = 10) {
+    if (numSamples <= 0) return;
+    if (numSamples > 128) numSamples = 128;
     long sumX = 0, sumY = 0;
     for (int i = 0; i < numSamples; i++) {
         sumX += analogRead(JOY_X);
@@ -336,8 +416,9 @@ inline void osCalibrateJoystick(int &centerX, int &centerY, int numSamples = 10)
 //  defaultVal: Kayıt yoksa dönecek değer
 // ============================================================
 inline int osLoadHighScore(const char *key, int defaultVal = 0) {
+    if (!key || !key[0] || strlen(key) > 15) return defaultVal;
     Preferences prefs;
-    prefs.begin("os", true);
+    if (!prefs.begin("os", true)) return defaultVal;
     int val = prefs.getInt(key, defaultVal);
     prefs.end();
     return val;
@@ -348,11 +429,17 @@ inline int osLoadHighScore(const char *key, int defaultVal = 0) {
 //  key: "hs_snake", "hs_pacman" gibi oyun-specific anahtar
 //  val: Kaydedilecek skor
 // ============================================================
-inline void osSaveHighScore(const char *key, int val) {
+inline bool osSaveHighScore(const char *key, int val) {
+    if (!key || !key[0] || strlen(key) > 15) {
+        log_e("Invalid high-score key");
+        return false;
+    }
     Preferences prefs;
-    prefs.begin("os", false);
-    prefs.putInt(key, val);
+    if (!prefs.begin("os", false)) { log_e("High-score NVS open failed"); return false; }
+    bool saved = prefs.putInt(key, val) == sizeof(int32_t);
     prefs.end();
+    if (!saved) log_e("High-score save failed: %s", key);
+    return saved;
 }
 
 // ============================================================
@@ -361,7 +448,7 @@ inline void osSaveHighScore(const char *key, int val) {
 // ============================================================
 inline bool osLoadSoundSetting(bool defaultVal = true) {
     Preferences prefs;
-    prefs.begin("os", true);
+    if (!prefs.begin("os", true)) return defaultVal;
     bool val = prefs.getBool("sound_en", defaultVal);
     prefs.end();
     return val;
@@ -371,11 +458,13 @@ inline bool osLoadSoundSetting(bool defaultVal = true) {
 //  osSaveSoundSetting — NVS'e ses ayarını kaydet
 //  enabled: true = açık, false = kapalı
 // ============================================================
-inline void osSaveSoundSetting(bool enabled) {
+inline bool osSaveSoundSetting(bool enabled) {
     Preferences prefs;
-    prefs.begin("os", false);
-    prefs.putBool("sound_en", enabled);
+    if (!prefs.begin("os", false)) { log_e("Sound-setting NVS open failed"); return false; }
+    bool saved = prefs.putBool("sound_en", enabled) == sizeof(bool);
     prefs.end();
+    if (!saved) log_e("Sound setting save failed");
+    return saved;
 }
 
 // ============================================================

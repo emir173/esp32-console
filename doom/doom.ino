@@ -25,6 +25,7 @@ volatile int8_t fb_render = 0;
 volatile int8_t fb_ready = -1;
 volatile int8_t fb_display = 1;
 SemaphoreHandle_t fb_swap_mutex;
+SemaphoreHandle_t displayMutex;
 
 float zBuffer[SW];
 float camXTable[SW];
@@ -79,30 +80,13 @@ bool showFps = false;   // ayarlardan ("os"/"show_fps") yuklenir
 // ════════════════════════════════════════════════════════════
 //  OYUN DURUMU & MENÜ
 // ════════════════════════════════════════════════════════════
-volatile GameState gameState = STATE_BOOT;
-bool titleDrawn = false;
-uint32_t bootStartTime = 0;
+std::atomic<GameState> gameState{STATE_BOOT};
 uint16_t *titlePicBuf = nullptr;
-
-int masterMenuSel = 0;
-bool masterMenuDrawn = false;
 
 int menuSelection = 0;
 int levelSelectIdx = 0;
 bool inLevelSelect = false;
 bool menuDrawn = false;
-
-// ════════════════════════════════════════════════════════════
-//  SNAKE MİNİ OYUN
-// ════════════════════════════════════════════════════════════
-SnakeCell snakeBody[SNAKE_MAX];
-int snakeLen = 3;
-int8_t snakeDirX = 1, snakeDirY = 0;
-int8_t snakeFoodX = 15, snakeFoodY = 13;
-uint32_t snakeLastMove = 0;
-int snakeScore = 0;
-bool snakeDead = false;
-bool snakeDrawn = false;
 
 int weaponType = 0;
 
@@ -181,13 +165,30 @@ void playSound(uint16_t freq, uint32_t dur) {
 }
 
 void returnToOS() {
+    // TaskDisplay'in devam eden SPI aktarımı bitmeden OS ekranına geçme.
+    setGameState(STATE_BOOT);
     osReturnToOS(tft, false);
+}
+
+// Yalnızca TaskEngine/setup çağırır; gameMutex tutulurken çağırma.
+// Display kilidi, eski kare aktarımının bitmesini garanti eder. Oyun dururken
+// bekleyen kareyi sil; resume/asansör sonrası eski sahne geri basılmasın.
+void setGameState(GameState state) {
+    xSemaphoreTake(displayMutex, portMAX_DELAY);
+    if (state != STATE_PLAYING) {
+        xSemaphoreTake(fb_swap_mutex, portMAX_DELAY);
+        fb_ready = -1;
+        xSemaphoreGive(fb_swap_mutex);
+    }
+    gameState.store(state);
+    xSemaphoreGive(displayMutex);
 }
 
 // ════════════════════════════════════════════════════════════
 //  loadLevel — Seviye yükleme: harita + sprite başlatma
 // ════════════════════════════════════════════════════════════
 void loadLevel(int level) {
+    xSemaphoreTake(gameMutex, portMAX_DELAY);
     lastAmmo = -1; lastHp = -1; lastArmor = -1; lastFps = -1; lastInfState = false;
     hasKey = false;
     doorAnimCount = 0;      // yarım kalmış kapı animasyonları temizlenir
@@ -289,66 +290,11 @@ void loadLevel(int level) {
 
     levelItemTotal = countLevelItemsLeft();   // intermission ITEMS x/y payı
     levelPlayMs = 0;
-}
-
-// ════════════════════════════════════════════════════════════
-//  snakeReset — Yılan oyununu başlangıç durumuna getir
-// ════════════════════════════════════════════════════════════
-void snakeReset() {
-    snakeLen = 3;
-    snakeDirX = 1; snakeDirY = 0;
-    snakeScore = 0; snakeDead = false; snakeDrawn = false;
-    for (int i = 0; i < snakeLen; i++) {
-        snakeBody[i].x = 5 - i;
-        snakeBody[i].y = 5;
-    }
-    snakeFoodX = (millis() % (SNAKE_W - 2)) + 1;
-    snakeFoodY = (millis() % (SNAKE_H - 2)) + 1;
-}
-
-// ════════════════════════════════════════════════════════════
-//  snakeUpdate — Yılan mantığı (hareket, çarpışma, yeme)
-// ════════════════════════════════════════════════════════════
-void snakeUpdate(uint32_t now) {
-    if (snakeDead) return;
-
-    uint32_t speed = max((uint32_t)80, (uint32_t)(200 - snakeLen * 2));
-    if (now - snakeLastMove < speed) return;
-    snakeLastMove = now;
-
-    const int CS = 5;
-    tft.fillRect(snakeBody[snakeLen - 1].x * CS, snakeBody[snakeLen - 1].y * CS, CS - 1, CS - 1, COL_SNAKE_BG);
-
-    for (int i = snakeLen - 1; i > 0; i--) snakeBody[i] = snakeBody[i - 1];
-
-    snakeBody[0].x += snakeDirX;
-    snakeBody[0].y += snakeDirY;
-
-    if (snakeBody[0].x < 0 || snakeBody[0].x >= SNAKE_W ||
-        snakeBody[0].y < 0 || snakeBody[0].y >= SNAKE_H) {
-        snakeDead = true; playSound(NOTE_E3, 150); return;
-    }
-
-    for (int i = 1; i < snakeLen; i++) {
-        if (snakeBody[0].x == snakeBody[i].x && snakeBody[0].y == snakeBody[i].y) {
-            snakeDead = true; playSound(NOTE_E3, 150); return;
-        }
-    }
-
-    if (snakeBody[0].x == snakeFoodX && snakeBody[0].y == snakeFoodY) {
-        if (snakeLen < SNAKE_MAX) snakeLen++;
-        snakeScore += 10;
-        playSound(NOTE_E5, 40);
-        do {
-            snakeFoodX = (millis() % (SNAKE_W - 2)) + 1;
-            snakeFoodY = (millis() % (SNAKE_H - 2)) + 1;
-        } while ([&](){
-            for (int i = 0; i < snakeLen; i++)
-                if (snakeBody[i].x == snakeFoodX && snakeBody[i].y == snakeFoodY) return true;
-            return false;
-        }());
-        tft.fillRect(snakeFoodX * CS, snakeFoodY * CS, CS - 1, CS - 1, COL_SNAKE_FOOD);
-    }
+    levelDone = false;
+    lastShieldState = false;
+    shieldStartTime = 0;
+    meleeTimer = 0;
+    xSemaphoreGive(gameMutex);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -454,18 +400,18 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     for (int y = 0; y < 28; y++) {
                         if (y > 10) {
                             uint8_t a8 = min((uint32_t)255, (uint32_t)(y - 10) * 20);
-                            uint16_t darkRow = tft.color565(
+                            uint16_t darkRow = COL_RGB(
                                 (uint8_t)(10 * (255 - a8) / 255), 0, 0);
                             tft.drawFastHLine(0, 100 + y, 160, darkRow);
                         }
                     }
-                    tft.fillRect(0, 110, 160, 18, tft.color565(0, 0, 0));
+                    tft.fillRect(0, 110, 160, 18, COL_RGB(0, 0, 0));
                     tft.drawFastHLine(0, 100, 160, COL_RGB(180, 0, 0));
                     tft.drawFastHLine(0, 101, 160, COL_RGB(80, 0, 0));
                     menuDrawn = true;
                 }
 
-                tft.fillRect(0, 102, 160, 26, tft.color565(0, 0, 0));
+                tft.fillRect(0, 102, 160, 26, COL_RGB(0, 0, 0));
 
                 {
                     bool sel = (menuSelection == 0);
@@ -473,7 +419,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     tft.setCursor(47, 105);
                     if (sel) {
                         uint8_t pulse = (uint8_t)(128 + 127 * sin(mnow * 0.008f));
-                        tft.setTextColor(tft.color565(255, pulse / 2, 0));
+                        tft.setTextColor(COL_RGB(255, pulse / 2, 0));
                         tft.print("> ");
                         tft.setTextColor(COL_RGB(255, 200, 0));
                         tft.print("NEW GAME");
@@ -488,7 +434,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     tft.setCursor(44, 118);
                     if (sel) {
                         uint8_t pulse = (uint8_t)(128 + 127 * sin(mnow * 0.008f));
-                        tft.setTextColor(tft.color565(255, pulse / 2, 0));
+                        tft.setTextColor(COL_RGB(255, pulse / 2, 0));
                         tft.print("> ");
                         tft.setTextColor(COL_RGB(255, 200, 0));
                         tft.print("SELECT LVL");
@@ -509,7 +455,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                         tft.fillScreen(TFT_BLACK);
                         drawStaticHUD();
                         lastFrame = millis(); fpsTimer = millis();
-                        gameState = STATE_PLAYING;
+                        setGameState(STATE_PLAYING);
                         menuDrawn = false;
                     } else {
                         inLevelSelect = true;
@@ -518,7 +464,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     }
                 }
 
-                if (!digitalRead(BTN_B)) {
+                else if (!digitalRead(BTN_B)) {
                     playSound(NOTE_G4, 50);
                     delay(200);
                     returnToOS();
@@ -533,7 +479,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
 
                 if (!menuDrawn) {
                     if (titlePicBuf) {
-                        uint16_t* darkBuf = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
+                        uint16_t* darkBuf = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                         if (darkBuf) {
                             for (int py = 0; py < 128; py++) {
                                 for (int px2 = 0; px2 < 160; px2++) {
@@ -547,10 +493,10 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                             tft.pushImage(0, 0, 160, 128, darkBuf);
                             free(darkBuf);
                         } else {
-                            tft.fillScreen(tft.color565(8, 0, 0));
+                            tft.fillScreen(COL_RGB(8, 0, 0));
                         }
                     } else {
-                        tft.fillScreen(tft.color565(8, 0, 0));
+                        tft.fillScreen(COL_RGB(8, 0, 0));
                     }
                     menuDrawn = true;
                 }
@@ -566,31 +512,31 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     bool sel = (i == levelSelectIdx);
 
                     if (sel) {
-                        tft.fillRect(14, yRow - 1, 132, 15, tft.color565(30, 5, 0));
+                        tft.fillRect(14, yRow - 1, 132, 15, COL_RGB(30, 5, 0));
                         tft.drawFastHLine(14, yRow - 1,  132, COL_RGB(120, 30, 0));
                         tft.drawFastHLine(14, yRow + 13, 132, COL_RGB(80, 15, 0));
                     } else {
-                        tft.fillRect(14, yRow - 1, 132, 15, tft.color565(5, 0, 0));
+                        tft.fillRect(14, yRow - 1, 132, 15, COL_RGB(5, 0, 0));
                     }
 
                     tft.setTextSize(1);
                     tft.setCursor(17, yRow + 2);
                     if (sel) {
                         uint8_t blink = ((mnow / 300) % 2) ? 255 : 180;
-                        tft.setTextColor(tft.color565(blink, blink / 3, 0));
+                        tft.setTextColor(COL_RGB(blink, blink / 3, 0));
                         tft.print("> ");
                     } else {
-                        tft.setTextColor(tft.color565(40, 8, 0));
+                        tft.setTextColor(COL_RGB(40, 8, 0));
                         tft.print("  ");
                     }
 
                     if (sel) tft.setTextColor(COL_MENU_TITLE);
-                    else    tft.setTextColor(tft.color565(50, 10, 0));
+                    else    tft.setTextColor(COL_RGB(50, 10, 0));
                     tft.print(levels[i].ep);
                     tft.print(" ");
 
                     if (sel) tft.setTextColor(COL_RGB(255, 210, 0));
-                    else    tft.setTextColor(tft.color565(80, 20, 0));
+                    else    tft.setTextColor(COL_RGB(80, 20, 0));
                     tft.print(levels[i].name);
                 }
 
@@ -604,11 +550,11 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     tft.fillScreen(TFT_BLACK);
                     drawStaticHUD();
                     lastFrame = millis(); fpsTimer = millis();
-                    gameState = STATE_PLAYING;
+                    setGameState(STATE_PLAYING);
                     menuDrawn = false;
                     inLevelSelect = false;
                 }
-                if (!digitalRead(BTN_B)) {
+                else if (!digitalRead(BTN_B)) {
                     playSound(NOTE_G4, 50);
                     delay(200);
                     inLevelSelect = false;
@@ -635,16 +581,16 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
             if (!digitalRead(BTN_A)) {
                 playSound(NOTE_D5, 40);
                 delay(200);
-                gameState = STATE_PLAYING;
+                setGameState(STATE_PLAYING);
                 lastFrame = millis();
             }
-            if (!digitalRead(BTN_B)) {
+            else if (!digitalRead(BTN_B)) {
                 playSound(NOTE_G4, 50);
                 delay(200);
-                gameState = STATE_MENU;
+                setGameState(STATE_MENU);
                 menuDrawn = false;
             }
-            if (!digitalRead(BTN_C)) {
+            else if (!digitalRead(BTN_C)) {
                 playSound(NOTE_G4, 50);
                 delay(200);
                 returnToOS();
@@ -656,6 +602,10 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
         // ==========================================
         // OYUN DURUMU (STATE_PLAYING)
         // ==========================================
+        if (gameState != STATE_PLAYING) {
+            vTaskDelay(pdMS_TO_TICKS(30));
+            continue;
+        }
         uint32_t now = millis();
         float dt = (now - lastFrame) / 1000.0f;
         lastFrame = now;
@@ -666,10 +616,10 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
 
         bool joySw_curr = digitalRead(JOY_SW);
         if (joySw_prev && !joySw_curr) {
-            gameState = STATE_PAUSE;
             menuDrawn = false;
             joySw_prev = joySw_curr;
             xSemaphoreGive(gameMutex);
+            setGameState(STATE_PAUSE);
             playSound(NOTE_G4, 50);
             continue;
         }
@@ -680,7 +630,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
         if (hp <= 0) {
             xSemaphoreGive(gameMutex);
 
-            gameState = STATE_BOOT;   // oyun mantigini dondur
+            setGameState(STATE_BOOT);   // oyun mantigini dondur
             vTaskDelay(pdMS_TO_TICKS(100));
 
             // Doom'a özel game-over ekranı (mavi renk ve boşluk hatalarını çözer)
@@ -722,14 +672,14 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     tft.fillScreen(TFT_BLACK);      // game-over kutusunu tamamen sil
                     drawStaticHUD();                // HUD cercevesini yeniden ciz
                     lastFrame = millis(); fpsTimer = millis();
-                    gameState = STATE_PLAYING;
+                    setGameState(STATE_PLAYING);
                     menuDrawn = false;
                     break;
                 }
                 if (!digitalRead(BTN_B)) {          // [B] Game Menu
                     playSound(NOTE_G4, 50);
                     delay(200);
-                    gameState = STATE_MENU;
+                    setGameState(STATE_MENU);
                     menuDrawn = false;
                     break;
                 }
@@ -755,7 +705,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
             levelDone = false;
             xSemaphoreGive(gameMutex);
 
-            gameState = STATE_BOOT;   // oyun mantigini dondur (game-over kalibi)
+            setGameState(STATE_BOOT);   // oyun mantigini dondur (game-over kalibi)
             vTaskDelay(pdMS_TO_TICKS(100));
 
             // Switch'in basılı hali kısa süre gösterilir (orijinal Doom'daki
@@ -882,14 +832,14 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                     tft.fillScreen(TFT_BLACK);
                     drawStaticHUD();
                     lastFrame = millis(); fpsTimer = millis();
-                    gameState = STATE_PLAYING;
+                    setGameState(STATE_PLAYING);
                     menuDrawn = false;
                     break;
                 }
                 if (!digitalRead(BTN_B)) {
                     playSound(NOTE_G4, 50);
                     delay(200);
-                    gameState = STATE_MENU;
+                    setGameState(STATE_MENU);
                     menuDrawn = false;
                     break;
                 }
@@ -921,7 +871,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
             }
             if (ax >= 0) {
                 xSemaphoreGive(gameMutex);
-                gameState = STATE_BOOT;
+                setGameState(STATE_BOOT);
                 vTaskDelay(pdMS_TO_TICKS(100));
 
                 // Kapanış: mevcut sahnenin üstüne iki kanat ortada birleşir
@@ -949,10 +899,12 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                 playSound(NOTE_G3, 160); vTaskDelay(pdMS_TO_TICKS(240));
 
                 // Işınlanma: hedef asansörün önündeki boş hücre, kabinden dışarı bakar
+                xSemaphoreTake(gameMutex, portMAX_DELAY);
                 px = ax + 0.5f; py = ay + 0.5f;
                 float ndx = (float)(ax - destX), ndy = (float)(ay - destY);
                 dirX = ndx; dirY = ndy;
                 planeX = -ndy * 0.66f; planeY = ndx * 0.66f;
+                xSemaphoreGive(gameMutex);
 
                 playSound(NOTE_C5, 50);                  // varış zili
                 for (int s = 8; s >= 0; s--) {           // açılış (sahne her adım tazelenir)
@@ -973,7 +925,7 @@ void IRAM_ATTR TaskEngine(void * pvParameters) {
                 while (!digitalRead(BTN_B)) { vTaskDelay(pdMS_TO_TICKS(30)); }
                 sonKullanma = millis();
                 lastFrame = millis();
-                gameState = STATE_PLAYING;
+                setGameState(STATE_PLAYING);
                 continue;
             }
             // Eşi olmayan/önü kapalı asansör: sessizce yok sayılır
@@ -1022,7 +974,13 @@ void IRAM_ATTR TaskDisplay(void * pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
-        if (fb_ready >= 0) {
+        xSemaphoreTake(displayMutex, portMAX_DELAY);
+        // Durum kilidi beklerken değişmiş olabilir.
+        if (gameState != STATE_PLAYING) {
+            xSemaphoreGive(displayMutex);
+            continue;
+        }
+        {
             int8_t toDisplay = -1;
             if (xSemaphoreTake(fb_swap_mutex, pdMS_TO_TICKS(2)) == pdTRUE) {
                 if (fb_ready >= 0) {
@@ -1033,36 +991,41 @@ void IRAM_ATTR TaskDisplay(void * pvParameters) {
                 xSemaphoreGive(fb_swap_mutex);
             }
             if (toDisplay >= 0) {
+                xSemaphoreTake(gameMutex, portMAX_DELAY);
+                int displayAmmo = ammo, displayHp = hp, displayArmor = armor;
+                bool displayKey = hasKey, displayShield = lastShieldState;
+                uint32_t displayMelee = meleeTimer;
+                xSemaphoreGive(gameMutex);
                 checkScreenshotFB(fb[toDisplay], SW, SH);
 
                 tft.pushImage(0, 0, SW, SH, fb[toDisplay]);
 
                 uint32_t now = millis();
                 int hy = SH;
-                bool currentInfState = (lastShieldState || (now - meleeTimer < 300));
-                if (currentInfState != lastInfState || ammo != lastAmmo) {
+                bool currentInfState = (displayShield || (now - displayMelee < 300));
+                if (currentInfState != lastInfState || displayAmmo != lastAmmo) {
                     tft.setTextColor(COL_AMMO_VAL, COL_HUDBG);
                     if (currentInfState) {
                         tft.setCursor(15, hy + 14); tft.print("INF");
                     } else {
-                        tft.setCursor(15, hy + 14); tft.printf("%03d", ammo);
+                        tft.setCursor(15, hy + 14); tft.printf("%03d", displayAmmo);
                     }
-                    lastInfState = currentInfState; lastAmmo = ammo;
+                    lastInfState = currentInfState; lastAmmo = displayAmmo;
                 }
 
-                if (hp != lastHp) {
-                    tft.setTextColor(hp > 25 ? COL_WHITE : COL_HP_LOW, COL_HUDBG);
-                    tft.setCursor(68, hy + 14); tft.printf("%03d%%", hp);
-                    lastHp = hp;
+                if (displayHp != lastHp) {
+                    tft.setTextColor(displayHp > 25 ? COL_WHITE : COL_HP_LOW, COL_HUDBG);
+                    tft.setCursor(68, hy + 14); tft.printf("%03d%%", displayHp);
+                    lastHp = displayHp;
                 }
 
-                if (armor != lastArmor) {
+                if (displayArmor != lastArmor) {
                     tft.setTextColor(COL_WHITE, COL_HUDBG);
-                    tft.setCursor(120, hy + 14); tft.printf("%03d%%", armor);
-                    lastArmor = armor;
+                    tft.setCursor(120, hy + 14); tft.printf("%03d%%", displayArmor);
+                    lastArmor = displayArmor;
                 }
 
-                if (hasKey) tft.fillRect(145, hy + 13, 8, 8, COL_RGB(255, 255, 0));
+                if (displayKey) tft.fillRect(145, hy + 13, 8, 8, COL_RGB(255, 255, 0));
                 else        tft.fillRect(145, hy + 13, 8, 8, COL_HUDBG);
 
                 frameCount++;
@@ -1076,6 +1039,7 @@ void IRAM_ATTR TaskDisplay(void * pvParameters) {
                 }
             }
         }
+        xSemaphoreGive(displayMutex);
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
@@ -1095,6 +1059,21 @@ void TaskJoy(void * pvParameters) {
 //  setup() — Donanım başlatma, PSRAM tahsisi, texture yükleme,
 //            FreeRTOS task ataması
 // ════════════════════════════════════════════════════════════
+void startupFailure(const char* message) {
+    Serial.printf("DOOM STARTUP ERROR: %s\n", message);
+    SD.end();
+    digitalWrite(SD_CS, HIGH);
+    SPI.end();
+    initDoomDisplay();
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setTextColor(COL_RED);
+    tft.setCursor(5, 40); tft.print("STARTUP ERROR");
+    tft.setCursor(5, 55); tft.print(message);
+    // Task'lar STATE_BOOT'ta kalır; geçersiz tamponla oyuna başlanmaz.
+    for (;;) vTaskDelay(pdMS_TO_TICKS(100));
+}
+
 void setup() {
     // 1) Buzzer sustur (reset sonrasi cizirti onler)
     osInitBuzzer();
@@ -1114,35 +1093,40 @@ void setup() {
     if (os_part) { esp_ota_set_boot_partition(os_part); }
 
     for (int i = 0; i < 3; i++) {
-        fb[i] = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
+        fb[i] = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!fb[i]) {
             Serial.println("KRITIK HATA: FB PSRAM'a tahsis edilemedi!");
             fb[i] = (uint16_t*)malloc(160 * 128 * 2);
         }
-        if (fb[i]) memset(fb[i], 0, 160 * 128 * 2);
+        if (!fb[i]) startupFailure("FRAMEBUFFER MEMORY");
+        memset(fb[i], 0, 160 * 128 * 2);
     }
     fb_swap_mutex = xSemaphoreCreateMutex();
-
+    displayMutex = xSemaphoreCreateMutex();
     gameMutex = xSemaphoreCreateMutex();
+    if (!fb_swap_mutex || !displayMutex || !gameMutex) startupFailure("MUTEX MEMORY");
 
     // Buton pinleri ayarla
     osInitButtons();
 
-    titlePicBuf = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
+    titlePicBuf = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!titlePicBuf) {
         titlePicBuf = (uint16_t*)malloc(160 * 128 * 2);
     }
+    if (titlePicBuf) memset(titlePicBuf, 0, 160 * 128 * 2);
 
     for (int i = 1; i < MAX_TEX; i++) {
-        tex[i] = (uint16_t*)heap_caps_malloc(TEX_W * TEX_H * 2, MALLOC_CAP_SPIRAM);
+        tex[i] = (uint16_t*)heap_caps_malloc(TEX_W * TEX_H * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!tex[i]) tex[i] = (uint16_t*)malloc(TEX_W * TEX_H * 2);
         if (!tex[i]) {
-            Serial.println("KRITIK HATA: Bellek yetersiz!");
-            tft.fillScreen(TFT_RED);
-            tft.setTextColor(TFT_WHITE);
-            tft.setCursor(10, 50);
-            tft.print("MEMORY ERROR! NO PSRAM");
-            while (1) { vTaskDelay(pdMS_TO_TICKS(100)); }
+            startupFailure("TEXTURE MEMORY");
+        }
+        // Eksik/bozuk SD dosyası heap artıkları olarak çizilmesin.
+        for (int y = 0; y < TEX_H; y++) for (int x = 0; x < TEX_W; x++) {
+            bool wall = i <= 7 || i == 31;
+            tex[i][y * TEX_W + x] = wall
+                ? (((x / 8 + y / 8) & 1) ? COL_DARKGRAY : COL_NEARBLACK)
+                : COL_CHROMA;
         }
     }
     for (int i = 8; i <= 13; i++) makeTex(i);
@@ -1151,7 +1135,7 @@ void setup() {
     // kullanılır (flip görünmez ama oyun bozulmaz), dekor BMP'si yoksa
     // sprite tamamen chroma = görünmez.
     memcpy(tex[TEX_EXIT_ON], tex[8], TEX_W * TEX_H * 2);
-    memcpy(tex[TEX_ELEV], tex[8], TEX_W * TEX_H * 2);
+    memcpy(tex[TEX_ELEV], tex[6], TEX_W * TEX_H * 2);
     for (int i = 0; i < TEX_W * TEX_H; i++) {
         tex[ST_LAMP][i]   = COL_CHROMA;
         tex[ST_PILLAR][i] = COL_CHROMA;
@@ -1167,7 +1151,7 @@ void setup() {
         oled.drawStr(10, 40, "Please wait...");
         oled.sendBuffer();
 
-        uint8_t* fileBuf = (uint8_t*)heap_caps_malloc(80000, MALLOC_CAP_SPIRAM);
+        uint8_t* fileBuf = (uint8_t*)heap_caps_malloc(80000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!fileBuf) fileBuf = (uint8_t*)malloc(80000);
 
         if (fileBuf) {
@@ -1236,9 +1220,7 @@ void setup() {
     }
 
     digitalWrite(SD_CS, HIGH); SPI.end(); delay(50);
-    tft.init();
-    tft.setRotation(1);
-    tft.setSwapBytes(true);
+    initDoomDisplay();
     for (int i = 0; i < SW; i++) camXTable[i] = 2.0f * i / SW - 1.0f;
     setScreenshotMode(SCR_BGR_NOSWAP);
     tft.fillScreen(TFT_BLACK);
@@ -1252,7 +1234,7 @@ void setup() {
            analogRead(JOY_Y) < 1400 || analogRead(JOY_Y) > 2600) {
         if (!warningShown) {
             tft.fillScreen(TFT_BLACK);
-            tft.setTextColor(TFT_RED); tft.setTextSize(1);
+            tft.setTextColor(COL_RED); tft.setTextSize(1);
             tft.setCursor(23, 60); tft.print("RELEASE JOYSTICK!");
             warningShown = true;
         }
@@ -1271,10 +1253,9 @@ void setup() {
         sumX += analogRead(JOY_X); sumY += analogRead(JOY_Y); delay(2);
     }
     joyCenterX = sumX / 10; joyCenterY = sumY / 10;
+    joyRawX = joyCenterX; joyRawY = joyCenterY;
 
-    gameState = STATE_MENU;
     menuDrawn = false;
-    titleDrawn = false;
     inLevelSelect = false;
 
     soundEnabled = osLoadSoundSetting(true);
@@ -1285,12 +1266,13 @@ void setup() {
         prefs.end();
     }
 
-    xTaskCreatePinnedToCore(TaskEngine, "TaskEngine", 30000, NULL, 2, NULL, 0);
-    xTaskCreatePinnedToCore(TaskDisplay, "TaskDisplay", 10000, NULL, 2, NULL, 1);
-    xTaskCreatePinnedToCore(TaskRadar, "TaskRadar", 20000, NULL, 0, NULL, 1);
-    xTaskCreatePinnedToCore(TaskJoy, "TaskJoy", 2048, NULL, 1, NULL, 1);
-
     lastFrame = millis(); fpsTimer = millis();
+    if (xTaskCreatePinnedToCore(TaskEngine, "TaskEngine", 30000, NULL, 2, NULL, 0) != pdPASS ||
+        xTaskCreatePinnedToCore(TaskDisplay, "TaskDisplay", 10000, NULL, 2, NULL, 1) != pdPASS ||
+        xTaskCreatePinnedToCore(TaskRadar, "TaskRadar", 20000, NULL, 0, NULL, 1) != pdPASS ||
+        xTaskCreatePinnedToCore(TaskJoy, "TaskJoy", 2048, NULL, 1, NULL, 1) != pdPASS)
+        startupFailure("TASK MEMORY");
+    setGameState(STATE_MENU);
 }
 
 // ════════════════════════════════════════════════════════════

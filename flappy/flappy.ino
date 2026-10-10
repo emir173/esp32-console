@@ -18,6 +18,7 @@
 #include "Bird.h"
 #include "Pipes.h"
 #include "Renderer.h"
+#include "Input.h"
 
 // ============ Display Objects ============
 TFT_eSPI tft = TFT_eSPI();
@@ -46,9 +47,10 @@ int flashFramesLeft = 0;
 // ============ DYING State ============
 bool birdLanded = false;
 unsigned long dyingStartMs = 0;
+bool deathTonePending = false;
 
 // ============ Timing ============
-unsigned long lastFrameMs = 0;
+uint32_t lastFrameUs = 0;
 unsigned long gameOverMs = 0;
 
 // ============ FPS Counter ============
@@ -67,13 +69,21 @@ void playSound(uint16_t freq, uint32_t dur) {
 // ============ Cloud Animation ============
 float cloudOffset = 0;
 
-// ============ Button Edge Detection ============
-int prevBtnA = HIGH;
+// ============ Debounced Button Presses ============
+FlappyButton buttonA, buttonB, buttonC, buttonJoy;
+
+void saveHighScoreIfNeeded() {
+    if (score > highScore) {
+        highScore = score;
+        osSaveHighScore("hs_flappy", highScore);
+    }
+}
 
 // ============================================================
 //  Return to OS Launcher
 // ============================================================
 void returnToOS() {
+    saveHighScoreIfNeeded();
     osReturnToOS(tft, soundEnabled);
 }
 
@@ -82,6 +92,7 @@ void returnToOS() {
 // ============================================================
 void resetGame() {
     bird.init();
+    bird.jump(); // The Start/Retry press also supplies the first flap.
     pipes.init();
     score = 0;
     newRecord = false;
@@ -91,7 +102,16 @@ void resetGame() {
     shakeFramesLeft = 0;
     flashFramesLeft = 0;
     birdLanded = false;
+    deathTonePending = false;
     state = PLAYING;
+    lastFrameUs = micros();
+}
+
+void enterGameMenu() {
+    saveHighScoreIfNeeded();
+    deathTonePending = false;
+    state = MENU;
+    lastFrameUs = micros();
 }
 
 // ============================================================
@@ -104,13 +124,9 @@ void enterDying() {
     shakeFramesLeft = SHAKE_DURATION_MS / (1000 / TARGET_FPS);
     birdLanded = false;
     newRecord = (score > highScore);
-    if (newRecord) {
-        highScore = score;
-        osSaveHighScore("hs_flappy", score);
-    }
+    saveHighScoreIfNeeded();
     playSound(NOTE_E3, 90);
-    delay(100);
-    playSound(NOTE_E3, 150);
+    deathTonePending = true;
 }
 
 // ============================================================
@@ -130,6 +146,11 @@ void setup() {
 
     // 4) Buton pinleri ayarla
     osInitButtons();
+    uint32_t inputNow = millis();
+    buttonA.reset(digitalRead(BTN_A), inputNow);
+    buttonB.reset(digitalRead(BTN_B), inputNow);
+    buttonC.reset(digitalRead(BTN_C), inputNow);
+    buttonJoy.reset(digitalRead(JOY_SW), inputNow);
 
     {
         Preferences prefs; prefs.begin("os", true);
@@ -164,14 +185,21 @@ void setup() {
     tft.fillScreen(TFT_BLACK);
 
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    if (!canvas.createSprite(SCR_W, SCR_H)) {
+        tft.setTextColor(TFT_RED);
+        tft.setCursor(5, 55);
+        tft.print("Display memory error");
+        delay(1500);
+        returnToOS();
+        return;
+    }
 
     randomSeed(analogRead(JOY_X) ^ (analogRead(JOY_Y) << 8) ^ micros());
 
     bird.init();
     pipes.init();
     state = MENU;
-    lastFrameMs = millis();
+    lastFrameUs = micros();
     fpsStartTime = millis();
 }
 
@@ -179,35 +207,40 @@ void setup() {
 //  LOOP
 // ============================================================
 void loop() {
-    // ---- JOY_SW: Pause toggle ----
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == PLAYING) {
-            state = PAUSE;
-            playSound(NOTE_G4, 50);
-        }
-    }
-    prevJoySw = currJoySw;
-
-    // ---- Delta-Time ----
     unsigned long now = millis();
-    float dt = (now - lastFrameMs) / 1000.0f;
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
+
+    // ---- Frame pacing + Delta-Time (unsigned subtraction handles wrap) ----
+    uint32_t frameNowUs = micros();
+    uint32_t elapsedUs = frameNowUs - lastFrameUs;
+    if (elapsedUs < FRAME_INTERVAL_US) {
+        delay(1);
+        return;
+    }
+    float dt = elapsedUs / 1000000.0f;
     if (dt > 0.05f) dt = 0.05f;
-    lastFrameMs = now;
+    lastFrameUs = frameNowUs;
 
     // ---- FPS Calculation ----
     fpsFrameCount++;
     if (now - fpsStartTime >= 1000) {
-        currentFPS = fpsFrameCount;
+        currentFPS = fpsFrameCount * 1000UL / (now - fpsStartTime);
         fpsFrameCount = 0;
         fpsStartTime = now;
     }
 
-    // ---- BTN_A: Edge detection ----
-    int btnA = digitalRead(BTN_A);
-    bool pressA = (btnA == LOW && prevBtnA == HIGH);
-    prevBtnA = btnA;
+    bool pressA = buttonA.takePress();
+    bool pressB = buttonB.takePress();
+    bool pressC = buttonC.takePress();
+    bool pressJoy = buttonJoy.takePress();
+
+    if (deathTonePending && now - dyingStartMs >= 100) {
+        playSound(NOTE_E3, 150);
+        deathTonePending = false;
+    }
 
     // ==========================================
     //  STATE MACHINE
@@ -228,7 +261,7 @@ void loop() {
                 playSound(NOTE_E5, 50);
                 resetGame();
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 returnToOS();
             }
             break;
@@ -237,14 +270,19 @@ void loop() {
         //  PLAYING
         // ======================================
         case PLAYING: {
-            // --- Physics ---
-            bird.update(dt);
+            if (pressJoy) {
+                state = PAUSE;
+                playSound(NOTE_G4, 50);
+                break;
+            }
 
             // --- Jump ---
             if (pressA) {
                 bird.jump();
                 playSound(NOTE_E5, 30);
             }
+            // Apply the flap before physics/collision for this frame.
+            bird.update(dt);
 
             // --- Pipe speed (difficulty scaling) ---
             float spd = BASE_SPEED + score * 1.2f;
@@ -252,14 +290,9 @@ void loop() {
 
             // --- Update pipes ---
             int scored = pipes.update(dt, spd);
-            if (scored > 0) {
-                score += scored;
-                popupTimer = SCORE_POPUP_DUR;
-                playSound(NOTE_G5, 30);
-            }
 
             // --- Update scrolling ground ---
-            groundOffset += spd * dt;
+            groundOffset = fmodf(groundOffset + spd * dt, (float)GROUND_PATTERN_PERIOD);
 
             // --- Update clouds ---
             cloudOffset += 30.0f * dt;
@@ -276,6 +309,13 @@ void loop() {
                 bird.y + BIRD_R >= GROUND_Y) {
                 enterDying();
                 break;
+            }
+
+            // A fatal frame must not award a pipe-clear point.
+            if (scored > 0) {
+                score += scored;
+                popupTimer = SCORE_POPUP_DUR;
+                playSound(NOTE_G5, 30);
             }
 
             // --- Render ---
@@ -334,6 +374,11 @@ void loop() {
 
             checkScreenshot(canvas);
             canvas.pushSprite(shakeX, shakeY);
+            // A shifted sprite leaves strips of the preceding frame uncovered.
+            if (shakeX > 0) tft.fillRect(0, 0, shakeX, SCR_H, TFT_BLACK);
+            if (shakeX < 0) tft.fillRect(SCR_W + shakeX, 0, -shakeX, SCR_H, TFT_BLACK);
+            if (shakeY > 0) tft.fillRect(0, 0, SCR_W, shakeY, TFT_BLACK);
+            if (shakeY < 0) tft.fillRect(0, SCR_H + shakeY, SCR_W, -shakeY, TFT_BLACK);
 
             // --- Transition to GAMEOVER when bird has landed ---
             if (birdLanded) {
@@ -355,13 +400,11 @@ void loop() {
                 playSound(NOTE_D5, 50);
                 resetGame();
             }
-            if (!digitalRead(BTN_B) && (millis() - gameOverMs > 600)) {
+            else if (pressB && (millis() - gameOverMs > 600)) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C) && (millis() - gameOverMs > 600)) {
+            else if (pressC && (millis() - gameOverMs > 600)) {
                 returnToOS();
             }
             break;
@@ -382,18 +425,16 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
-            if (!digitalRead(BTN_A)) {
+            if (pressA || pressJoy) {
                 playSound(NOTE_D5, 40);
                 state = PLAYING;
-                lastFrameMs = millis();
+                lastFrameUs = micros();
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C)) {
+            else if (pressC) {
                 playSound(NOTE_G4, 50);
                 returnToOS();
             }

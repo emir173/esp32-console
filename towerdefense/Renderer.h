@@ -431,7 +431,7 @@ inline void drawEnemySprite(TFT_eSprite &cv, const Enemy &e) {
         }
     }
 
-    uint32_t now = millis();
+    uint64_t now = enemyMillis();
 
     // Frost etkisi: gövdeyi saran buz mavisi çerçeve
     if (e.slowUntil > now) cv.drawRoundRect(oX, oY, oW, oH, 3, COL_SLOW_MARK);

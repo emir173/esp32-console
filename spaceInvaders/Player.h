@@ -14,8 +14,8 @@ struct Player {
     void init() {
         x = SCR_W / 2.0f;
         lives = START_LIVES;
-        hitTime = 0;
-        lastFireMs = 0;
+        hitTime = millis(); // Give every new run the same spawn protection.
+        lastFireMs = millis() - (unsigned long)FIRE_COOLDOWN;
     }
 
     bool isInvincible() const {

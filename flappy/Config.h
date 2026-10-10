@@ -17,6 +17,8 @@ constexpr float BIRD_ANGLE_SPEED = 360.0f;
 
 // ============ Pipe Constants ============
 constexpr int   PIPE_W      = 16;
+constexpr int   PIPE_LIP_OVERHANG = 2;
+constexpr int   PIPE_LIP_H = 5;
 constexpr int   PIPE_GAP    = 36;
 constexpr float BASE_SPEED  = 45.0f;
 constexpr float MAX_SPEED   = 96.0f;
@@ -35,6 +37,7 @@ constexpr float SCORE_POPUP_DUR = 0.45f;
 
 // ============ Timing ============
 constexpr int TARGET_FPS = 60;
+constexpr uint32_t FRAME_INTERVAL_US = 1000000 / TARGET_FPS;
 
 // ============ Colors (RGB565) ============
 constexpr uint16_t COL_SKY           = 0x65BF;  // (100, 180, 255)

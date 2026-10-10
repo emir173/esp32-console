@@ -63,8 +63,7 @@ inline void drawSpaceDust(TFT_eSprite &canvas, SpaceDust *dust, int nDust,
         p = rotateX(p, -camPitch);
         int sx, sy;
         if (project(p, sx, sy) && sx >= 0 && sx < SCR_W && sy >= 0 && sy < SCR_H - HUD_H) {
-            uint8_t b = (uint8_t)(120.0f / dust[i].z * 5.0f);
-            b = constrain(b, 10, 80);
+            uint8_t b = (uint8_t)constrain(600.0f / dust[i].z, 10.0f, 80.0f);
             canvas.drawPixel(sx, sy, RGB(b / 2, b / 2, b));
         }
     }
@@ -220,13 +219,13 @@ inline void drawTitle(TFT_eSprite &canvas, Star *stars, int nStars,
 
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_WHITE);
-    canvas.setCursor(53, 95);
+    canvas.setCursor(53, 85);
     canvas.print("[A] Start");
 
-    canvas.setCursor(47, 105);
+    canvas.setCursor(47, 95);
     canvas.print("[B] OS Menu");
 
-    canvas.setCursor(50, 115);
+    canvas.setCursor(50, 105);
     canvas.print("[JOY] Move");
 
     // Rekor
@@ -234,7 +233,7 @@ inline void drawTitle(TFT_eSprite &canvas, Star *stars, int nStars,
     char rekorBuf[20];
     snprintf(rekorBuf, sizeof(rekorBuf), "Best: %d", highScore);
     int txtW = strlen(rekorBuf) * 6;
-    canvas.setCursor((160 - txtW) / 2, 140);
+    canvas.setCursor((SCR_W - txtW) / 2, 118);
     canvas.print(rekorBuf);
 }
 

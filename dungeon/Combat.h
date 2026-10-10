@@ -305,6 +305,7 @@ inline void clearBolts() {
 //  (düşman, boss, telegraf, lav) bunu kullanır.
 // ------------------------------------------------------------
 inline void damagePlayer(int dmg) {
+    if (playerDied) return;
     float pcx = player.tileX * TILE_PX + TILE_PX / 2;
     float pcy = player.tileY * TILE_PX + TILE_PX / 2;
 
@@ -417,6 +418,10 @@ inline void clearEffects() {
     bossDefeated = false;
     flashUntil = 0;
     gameMsgUntil = 0;
+    comboCount = 0;
+    lastKillTimeMs = 0;
+    levelUpFxStart = 0;
+    player.lastAttackMs = 0;
 }
 
 // ------------------------------------------------------------

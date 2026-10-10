@@ -23,13 +23,16 @@ struct Pipes {
         int newlyScored = 0;
         for (int i = 0; i < NUM_PIPES; i++) {
             p[i].x -= speed * dt;
+        }
 
-            if (!p[i].scored && p[i].x + PIPE_W < BIRD_X) {
+        for (int i = 0; i < NUM_PIPES; i++) {
+            // Award only after the entire bird has cleared the pipe lip.
+            if (!p[i].scored && p[i].x + PIPE_W + PIPE_LIP_OVERHANG < BIRD_X - BIRD_R) {
                 p[i].scored = true;
                 newlyScored++;
             }
 
-            if (p[i].x + PIPE_W < -5) {
+            if (p[i].x + PIPE_W + PIPE_LIP_OVERHANG < -5) {
                 float maxX = 0;
                 for (int j = 0; j < NUM_PIPES; j++) {
                     if (p[j].x > maxX) maxX = p[j].x;
@@ -45,13 +48,16 @@ struct Pipes {
     bool collidesWith(float birdY, int birdR) const {
         for (int i = 0; i < NUM_PIPES; i++) {
             int px = (int)p[i].x;
-            if (BIRD_X + birdR > px && BIRD_X - birdR < px + PIPE_W) {
-                int gapTop = p[i].gapCenter - PIPE_GAP / 2;
-                int gapBot = p[i].gapCenter + PIPE_GAP / 2;
-                if ((int)birdY - birdR < gapTop || (int)birdY + birdR > gapBot) {
-                    return true;
-                }
-            }
+            int gapTop = p[i].gapCenter - PIPE_GAP / 2;
+            int gapBot = p[i].gapCenter + PIPE_GAP / 2;
+            bool bodyOverlap = BIRD_X + birdR > px && BIRD_X - birdR < px + PIPE_W;
+            if (bodyOverlap && (birdY - birdR < gapTop || birdY + birdR > gapBot)) return true;
+
+            bool lipOverlap = BIRD_X + birdR > px - PIPE_LIP_OVERHANG &&
+                              BIRD_X - birdR < px + PIPE_W + PIPE_LIP_OVERHANG;
+            if (lipOverlap &&
+                ((birdY + birdR > gapTop - PIPE_LIP_H && birdY - birdR < gapTop) ||
+                 (birdY + birdR > gapBot && birdY - birdR < gapBot + PIPE_LIP_H))) return true;
         }
         return false;
     }

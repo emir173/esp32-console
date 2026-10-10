@@ -54,6 +54,8 @@ struct InvaderGrid {
     }
 
     void killAt(int row, int col, int wave) {
+        if (row < 0 || row >= ALIEN_ROWS || col < 0 || col >= ALIEN_COLS ||
+            !aliens[row][col]) return;
         aliens[row][col] = false;
         count--;
         recalcSpeed(wave);
@@ -76,10 +78,12 @@ struct InvaderGrid {
         float rightEdge = alienX(rc) + (float)ALIEN_W;
         float leftEdge  = alienX(lc);
         if (rightEdge >= (float)SCR_W - 1.0f && dir > 0) {
+            gridX -= rightEdge - ((float)SCR_W - 1.0f);
             dir = -1;
             gridY += (float)ALIEN_DROP;
         }
-        if (leftEdge <= 1.0f && dir < 0) {
+        else if (leftEdge <= 1.0f && dir < 0) {
+            gridX += 1.0f - leftEdge;
             dir = 1;
             gridY += (float)ALIEN_DROP;
         }

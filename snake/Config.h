@@ -20,6 +20,12 @@ constexpr int BASE_SPEED = 150;
 constexpr int MIN_SPEED  = 55;
 constexpr int SPEED_DEC  = 2;
 
+// Isaretli hesap: yuksek skorda unsigned tasmasi hizi bozmasin.
+inline unsigned long snakeMoveInterval(int score) {
+    int interval = BASE_SPEED - (score / 50) * SPEED_DEC;
+    return (unsigned long)(interval < MIN_SPEED ? MIN_SPEED : interval);
+}
+
 // ============ Direction Constants ============
 constexpr int DIR_UP    = 0;
 constexpr int DIR_RIGHT = 1;

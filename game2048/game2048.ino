@@ -8,6 +8,7 @@
 //    JOY_SW  -> Pause
 //    BTN_A   -> Start / Restart
 //    BTN_B   -> Return to OS Launcher
+//               (Pause/Win/Game Over: game menu; BTN_C: OS)
 //    BTN_D   -> Keep going (win ekraninda devam)
 // ============================================================
 #include <TFT_eSPI.h>
@@ -92,6 +93,21 @@ void saveBestIfRecord() {
     }
 }
 
+void enterGameMenu() {
+    saveBestIfRecord();
+    state = ST_MENU;
+    while (!digitalRead(BTN_B)) delay(10);
+}
+
+void finishGame() {
+    newRecord = (score > bestAtRunStart && score > 0);
+    saveBestIfRecord();
+    playSound(NOTE_E3, 90); delay(100);
+    playSound(NOTE_E3, 120);
+    state = ST_GAMEOVER;
+    gameOverMs = millis();
+}
+
 void returnToOS() {
     saveBestIfRecord();   // yarim kalan run'in rekoru kaybolmasin
     if (osPartitionValid()) {
@@ -106,8 +122,7 @@ void returnToOS() {
     tft.print("Standalone: no OS");
     delay(STANDALONE_MSG_MS);
     tft.fillScreen(TFT_BLACK);
-    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
+    enterGameMenu();
 }
 
 // ============================================================
@@ -129,6 +144,7 @@ void resetGame() {
     board.spawn(r, c); spawnMs[r][c] = millis();
 
     joystick.reset();
+    lastFrameDir = -1;
     state = ST_PLAYING;
 }
 
@@ -148,6 +164,9 @@ void startMove(int dir) {
 void finalizeMove() {
     unsigned long now = millis();
     memcpy(board.grid, pendingGrid, sizeof(board.grid));
+    // Efektler eski hucrelere ait; yeni tahta icin yeniden baslat.
+    memset(mergeMs, 0, sizeof(mergeMs));
+    memset(spawnMs, 0, sizeof(spawnMs));
 
     if (pendingGain > 0) {
         score += pendingGain;
@@ -177,17 +196,12 @@ void finalizeMove() {
         playSound(NOTE_E5, 50); delay(60);
         playSound(NOTE_G5, 40);
         state = ST_WIN;
-        gameOverMs = now;
+        gameOverMs = millis();
         return;
     }
 
     if (!board.canMove()) {
-        newRecord = (score > bestAtRunStart && score > 0);
-        saveBestIfRecord();
-        playSound(NOTE_E3, 90); delay(100);
-        playSound(NOTE_E3, 120);
-        state = ST_GAMEOVER;
-        gameOverMs = now;
+        finishGame();
     }
 }
 
@@ -277,7 +291,7 @@ void setup() {
     randomSeed(analogRead(JOY_Y) ^ (analogRead(JOY_X) << 8) ^ micros());
 
     state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
+    while (!digitalRead(BTN_B)) delay(10);
     lastFrameMs = millis();
     fpsStartTime = millis();
 }
@@ -394,16 +408,18 @@ void loop() {
 
             if (now - gameOverMs > 600) {
                 if (pressD) {
-                    playSound(NOTE_D5, 40);
-                    state = ST_PLAYING;
+                    if (board.canMove()) {
+                        playSound(NOTE_D5, 40);
+                        state = ST_PLAYING;
+                    } else {
+                        finishGame();
+                    }
                 } else if (pressA) {
                     playSound(NOTE_D5, 50);
                     resetGame();
                 } else if (!digitalRead(BTN_B)) {
                     playSound(NOTE_G4, 50);
-                    resetGame();
-                    state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
+                    enterGameMenu();
                 } else if (!digitalRead(BTN_C)) {
                     returnToOS();
                 }
@@ -432,14 +448,10 @@ void loop() {
             if (pressA && now - gameOverMs > 600) {
                 playSound(NOTE_D5, 50);
                 resetGame();
-            }
-            if (!digitalRead(BTN_B) && now - gameOverMs > 600) {
+            } else if (!digitalRead(BTN_B) && now - gameOverMs > 600) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-            }
-            if (!digitalRead(BTN_C) && now - gameOverMs > 600) {
+                enterGameMenu();
+            } else if (!digitalRead(BTN_C) && now - gameOverMs > 600) {
                 returnToOS();
             }
             break;
@@ -454,18 +466,14 @@ void loop() {
             checkScreenshot(canvas);
             canvas.pushSprite(0, 0);
 
-            if (!digitalRead(BTN_A)) {
+            if (pressA) {
                 playSound(NOTE_D5, 40);
                 state = ST_PLAYING;
                 lastFrameMs = millis();
-            }
-            if (!digitalRead(BTN_B)) {
+            } else if (!digitalRead(BTN_B)) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = ST_MENU;
-                while (!digitalRead(BTN_B)) delay(10);
-            }
-            if (!digitalRead(BTN_C)) {
+                enterGameMenu();
+            } else if (!digitalRead(BTN_C)) {
                 playSound(NOTE_G4, 50);
                 returnToOS();
             }

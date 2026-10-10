@@ -18,6 +18,7 @@
 #include "Enemies.h"
 #include "Projectiles.h"
 #include "Renderer.h"
+#include "Input.h"
 
 // ============ Donanim Nesneleri (Tekil Tanim) ============
 TFT_eSPI tft = TFT_eSPI();
@@ -32,7 +33,27 @@ void playSound(uint16_t freq, uint32_t dur) {
 }
 
 void returnToOS() {
+    saveBestIfNeeded();
     osReturnToOS(tft, soundEnabled);
+}
+
+void saveBestIfNeeded() {
+    if (ship.score > highScore) {
+        highScore = ship.score;
+        osSaveHighScore(HIGH_SCORE_KEY, highScore);
+    }
+}
+
+void finishGame() {
+    newRecord = ship.score > highScore;
+    saveBestIfNeeded();
+    state = ST_GAMEOVER;
+    stateTimer = millis();
+}
+
+void enterGameMenu() {
+    saveBestIfNeeded();
+    state = ST_TITLE;
 }
 
 // ============ Durum ============
@@ -71,6 +92,9 @@ float animTime = 0.0f;
 int animFrame = 0;
 uint32_t stateTimer = 0;
 int highScore = 0;
+bool newRecord = false;
+bool canvasReady = false;
+StrikeButton buttonA, buttonB, buttonC, buttonJoy;
 
 uint32_t fpsFrameCount = 0;
 uint32_t fpsStartTime = 0;
@@ -103,6 +127,8 @@ void resetGame() {
     waveEnemiesPerWave = 4;
     waveActive = true;
     animTime = 0.0f;
+    animFrame = 0;
+    newRecord = false;
     clearBullets();
     clearEnemies();
     clearExplosions();
@@ -135,8 +161,8 @@ void setup() {
         showFps = prefs.getBool("show_fps", false);
         prefs.end();
     }
-    // NVS — yüksek skor ("hs_galacticstrike" anahtarı, "os" namespace)
-    highScore = osLoadHighScore("hs_galacticstrike", 0);
+    // NVS — maximum 15-character key, shared with the launcher.
+    highScore = osLoadHighScore(HIGH_SCORE_KEY, 0);
 
     // 6) SPI baslat
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, -1);
@@ -157,10 +183,18 @@ void setup() {
 
     // 9) Sprite tamponu (double buffering)
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    canvasReady = canvas.createSprite(SCR_W, SCR_H) != nullptr;
+    if (!canvasReady) {
+        tft.setTextColor(TFT_RED); tft.setTextSize(1);
+        tft.setCursor(20, 50); tft.print("FRAMEBUFFER FAILED");
+        tft.setCursor(23, 70); tft.print("[B/C] OS Menu");
+        return;
+    }
 
     // 10) Joystick kalibrasyon
     bool warn = false;
+    bool calibrationTimedOut = false;
+    uint32_t calibrationStart = millis();
     while (analogRead(JOY_X) < 1400 || analogRead(JOY_X) > 2600 ||
            analogRead(JOY_Y) < 1400 || analogRead(JOY_Y) > 2600) {
         if (!warn) {
@@ -169,10 +203,19 @@ void setup() {
             tft.setCursor(23, 60); tft.print("RELEASE JOYSTICK!");
             warn = true;
         }
+        if (!digitalRead(BTN_B) || !digitalRead(BTN_C)) returnToOS();
+        if (millis() - calibrationStart >= 5000) {
+            calibrationTimedOut = true;
+            break;
+        }
         delay(50);
     }
     if (warn) { tft.fillScreen(TFT_BLACK); delay(300); }
-    osCalibrateJoystick(joyCenterX, joyCenterY);
+    if (calibrationTimedOut) {
+        joyCenterX = joyCenterY = 2048;
+    } else {
+        osCalibrateJoystick(joyCenterX, joyCenterY);
+    }
 
     // 11) Rastgele tohum
     randomSeed(analogRead(JOY_Y) ^ (analogRead(JOY_X) << 8) ^ micros());
@@ -182,6 +225,10 @@ void setup() {
     state = ST_TITLE;
     lastFrameMs = millis();
     fpsStartTime = millis();
+    buttonA.reset(digitalRead(BTN_A), lastFrameMs);
+    buttonB.reset(digitalRead(BTN_B), lastFrameMs);
+    buttonC.reset(digitalRead(BTN_C), lastFrameMs);
+    buttonJoy.reset(digitalRead(JOY_SW), lastFrameMs);
 }
 
 // ============================================================
@@ -189,6 +236,16 @@ void setup() {
 // ============================================================
 void loop() {
     uint32_t now = millis();
+    if (!canvasReady) {
+        if (!digitalRead(BTN_B) || !digitalRead(BTN_C)) returnToOS();
+        delay(1);
+        return;
+    }
+
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
 
     // Kare hizi siniri (60 FPS)
     if (now - lastFrameMs < FRAME_MS) return;
@@ -209,27 +266,11 @@ void loop() {
         fpsStartTime = now;
     }
 
-    // JOY_SW: Pause toggle (kenar tespiti)
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == ST_PLAY) {
-            state = ST_PAUSE;
-            playSound(NOTE_G4, 50);
-        }
-    }
-    prevJoySw = currJoySw;
-
-    // BTN_C: OS menuye don (baslik ekraninda)
-    if (!digitalRead(BTN_B) && (state == ST_TITLE)) {
-        returnToOS();
-    }
-
-    // BTN_A: Kenar dedeksiyonu
-    bool btnA = !digitalRead(BTN_A);
-    static bool prevA = false;
-    bool btnA_pressed = (btnA && !prevA);
-    prevA = btnA;
+    bool btnA = buttonA.stable == LOW;
+    bool btnA_pressed = buttonA.takePress();
+    bool btnB_pressed = buttonB.takePress();
+    bool btnC_pressed = buttonC.takePress();
+    bool joy_pressed = buttonJoy.takePress();
 
     // Joystick okuma + olu bolge
     float jx = (analogRead(JOY_X) - joyCenterX) / 2048.0f;
@@ -237,7 +278,7 @@ void loop() {
     if (fabsf(jx) < 0.15f) jx = 0;
     if (fabsf(jy) < 0.15f) jy = 0;
 
-    updateStars(dt);
+    if (state != ST_PAUSE) updateStars(dt);
 
     // ---- Durum Makinesi ----
     switch (state) {
@@ -248,10 +289,17 @@ void loop() {
             resetGame();
             state = ST_PLAY;
             playSound(NOTE_E5, 50);
+        } else if (btnB_pressed) {
+            returnToOS();
         }
         break;
 
     case ST_PLAY:
+        if (joy_pressed) {
+            state = ST_PAUSE;
+            playSound(NOTE_G4, 50);
+            break;
+        }
         {
             float mvx = jx, mvy = jy;
             float m = mvx * mvx + mvy * mvy;
@@ -262,17 +310,21 @@ void loop() {
         ship.x = constrain(ship.x, 6.0f, (float)SCR_W - 6);
         ship.y = constrain(ship.y, 10.0f, (float)SCR_H - HUD_H - 8);
 
-        if (btnA) firePlayer();
         if (ship.shootCD > 0.0f) ship.shootCD -= dt;
 
         if (ship.invincTimer > 0.0f) ship.invincTimer -= dt;
         if (ship.tripleTimer > 0.0f) ship.tripleTimer -= dt;
         if (ship.shieldTimer > 0.0f) ship.shieldTimer -= dt;
+        if (btnA) firePlayer();
 
         updateBullets(dt);
         updateEnemies(dt);
         updateWaveSpawning(dt);
         updateCollisions(dt);
+        if (state == ST_GAMEOVER) {
+            drawGameOver();
+            break;
+        }
         updateExplosions(dt);
 
         canvas.fillSprite(COL_BG);
@@ -289,17 +341,15 @@ void loop() {
 
     case ST_GAMEOVER:
         drawGameOver();
+        if (now - stateTimer < 600) break;
         if (btnA_pressed) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+            resetGame();
+            state = ST_PLAY;
             playSound(NOTE_D5, 50);
-        }
-        if (!digitalRead(BTN_B)) {
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
+        } else if (btnB_pressed) {
+            enterGameMenu();
             playSound(NOTE_G4, 50);
-        }
-        if (!digitalRead(BTN_C)) {
+        } else if (btnC_pressed) {
             returnToOS();
         }
         break;
@@ -319,18 +369,14 @@ void loop() {
         checkScreenshot(canvas);
         canvas.pushSprite(0, 0);
 
-        if (btnA_pressed) {
+        if (btnA_pressed || joy_pressed) {
             playSound(NOTE_D5, 40);
             state = ST_PLAY;
             lastFrameMs = millis();
-        }
-        if (!digitalRead(BTN_B)) {
+        } else if (btnB_pressed) {
             playSound(NOTE_G4, 50);
-            resetGame();
-            state = ST_TITLE;
-                while (!digitalRead(BTN_B)) delay(10);
-        }
-        if (!digitalRead(BTN_C)) {
+            enterGameMenu();
+        } else if (btnC_pressed) {
             playSound(NOTE_G4, 50);
             returnToOS();
         }

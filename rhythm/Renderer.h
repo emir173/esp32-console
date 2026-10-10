@@ -160,15 +160,14 @@ inline void drawJudgement(TFT_eSprite &canvas, const NoteManager &nm, unsigned l
         default:            txt = "MISS";    col = COL_MISS;    break;
     }
 
-    bool big = (nm.lastGrade == GRADE_PERFECT);
-    canvas.setTextSize(big ? 2 : 1);
+    canvas.setTextSize(1);
     int w = canvas.textWidth(txt);
     // Vurulan seridin merkezine hizala, ekran disina tasma
     int x = LANE_CENTER[nm.lastGradeLane] - w / 2;
     if (x < 2) x = 2;
     if (x + w > SCR_W - 2) x = SCR_W - 2 - w;
     canvas.setTextColor(col);
-    canvas.setCursor(x, big ? 82 : 90);
+    canvas.setCursor(x, 90);
     canvas.print(txt);
 }
 

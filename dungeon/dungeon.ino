@@ -58,6 +58,8 @@ bool newRecord = false;      // Bu oyunda rekor kırıldı mı
 
 GameState state = MENU;
 GameState playState = PLAYING;      // Menülere girerken dönülecek state
+void enterGameMenu();
+void beginFloorPlay();
 int floorNum = 1;                   // Mevcut kat
 uint32_t stateTimer = 0;            // Ekran bekleme süreleri için
 
@@ -117,7 +119,7 @@ void returnToOS() {
     tft.print("Standalone: no OS");
     delay(STANDALONE_MSG_MS);
     tft.fillScreen(TFT_BLACK);
-    state = MENU;
+    enterGameMenu();
 }
 
 // ------------------------------------------------------------
@@ -268,10 +270,11 @@ void startFloor() {
         osSaveHighScore("hs_dungeon", highScore);
         newRecord = true;
     }
-    saveGameState(floorNum, killsTotal);
+    if (!saveGameState(floorNum, killsTotal)) showMessage("CHECKPOINT SAVE FAILED");
 }
 
 void startNewGame() {
+    jingle.active = false;
     player.init();
     inventory.init();
     syncPlayerKeys();
@@ -280,9 +283,30 @@ void startNewGame() {
     floorNum = 1;
     newRecord = false;
     startFloor();
-    state = PLAYING;
-    playState = PLAYING;
+    beginFloorPlay();
+}
+
+// Checkpoint ve normal kat geçişi aynı boss giriş akışını kullanır.
+void beginFloorPlay() {
+    heldDir = -1;
+    heldNav = 0;
+    if (isBossFloor) {
+        playSound(NOTE_G3, SND_BOSS_INTRO_MS);
+        state = BOSS_INTRO;
+        playState = BOSS_FIGHT;
+        stateTimer = millis();
+    } else {
+        state = PLAYING;
+        playState = PLAYING;
+    }
     lastFrameUs = micros();
+}
+
+void enterGameMenu() {
+    menuHasSave = hasSaveGame();
+    menuCursor = menuHasSave ? 0 : 1;
+    heldNav = 0;
+    state = MENU;
 }
 
 void goLevelClear() {
@@ -293,6 +317,9 @@ void goLevelClear() {
 }
 
 void goGameOver() {
+    clearSaveGame();
+    menuHasSave = false;
+    menuCursor = 1;
     jingle.start(JI_DEATH);
     state = GAMEOVER;
     stateTimer = millis();
@@ -602,12 +629,16 @@ void loop() {
             if (aP) {
                 playSound(NOTE_E5, SND_START_MS);
                 if (menuHasSave && menuCursor == 0) {
-                    loadGameState(floorNum, killsTotal);
-                    newRecord = false;
-                    startFloor();
-                    state = PLAYING;
-                    playState = PLAYING;
-                    lastFrameUs = micros();
+                    if (loadGameState(floorNum, killsTotal)) {
+                        jingle.active = false;
+                        newRecord = false;
+                        startFloor();
+                        beginFloorPlay();
+                    } else {
+                        clearSaveGame();
+                        startNewGame();
+                        showMessage("SAVE INVALID: NEW GAME");
+                    }
                 } else {
                     startNewGame();
                 }
@@ -655,25 +686,26 @@ void loop() {
             }
             if (state != PLAYING && state != BOSS_FIGHT) break;
 
-            if (aP) interactA();
+            // Lavdan gelen ölümden sonra aynı karede saldırı/XP ile can yenilenmesin.
+            if (aP && !playerDied) interactA();
 
             enemyTickAcc += dt;
-            while (enemyTickAcc >= FRAME_SEC) {
+            while (enemyTickAcc >= FRAME_SEC && !playerDied) {
                 enemyTickAcc -= FRAME_SEC;
                 tickEnemies();
-                if (state == BOSS_FIGHT) tickBoss();
+                if (state == BOSS_FIGHT && !playerDied) tickBoss();
                 tickSpellCooldowns();
                 if (playerDied) break;
             }
 
             statusAcc += dt;
-            while (statusAcc >= STATUS_TICK_MS / 1000.0f) {
+            while (statusAcc >= STATUS_TICK_MS / 1000.0f && !playerDied) {
                 statusAcc -= STATUS_TICK_MS / 1000.0f;
                 tickStatus1Hz();
             }
 
-            updateTelegraphs();
-            updateBolts();                 // Lich büyü mermileri (v3.2)
+            if (!playerDied) updateTelegraphs();
+            if (!playerDied) updateBolts(); // Lich büyü mermileri (v3.2)
             particles.update(dt);
             updatePopups(dt);
             updateSlashes(dt);
@@ -708,7 +740,7 @@ void loop() {
                     startNewGame();
                 } else if (bP) {
                     clearSaveGame();
-                    state = MENU;
+                    enterGameMenu();
                     playSound(NOTE_G4, 50);
                     delay(200);
                 } else if (cP) {
@@ -727,7 +759,7 @@ void loop() {
                 state = playState;
                 lastFrameUs = micros();
             } else if (bP) {
-                state = MENU;
+                enterGameMenu();
                 playSound(NOTE_G4, 50);
                 delay(200);
             } else if (cP) {
@@ -743,16 +775,7 @@ void loop() {
                 BiomeType prevBiome = currentBiome;
                 startFloor();
                 if (currentBiome != prevBiome) showBiomeMessage();
-                if (isBossFloor) {
-                    playSound(NOTE_G3, SND_BOSS_INTRO_MS);
-                    state = BOSS_INTRO;
-                    playState = BOSS_FIGHT;
-                    stateTimer = millis();
-                } else {
-                    state = PLAYING;
-                    playState = PLAYING;
-                }
-                lastFrameUs = micros();
+                beginFloorPlay();
             }
             break;
         }

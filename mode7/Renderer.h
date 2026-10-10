@@ -8,6 +8,7 @@
 #include <TFT_eSPI.h>
 #include <U8g2lib.h>
 #include "Config.h"
+#include "Race.h"
 #include "../hardware_config.h"
 
 // ============================================================
@@ -29,7 +30,7 @@ inline void renderMode7(uint16_t* fb, const Racer& player, uint32_t animTick) {
             (int)(180 - t * 50),
             255
         );
-        for (int x = 0; x < SW; x++) fb[y * SW + x] = skyC;
+        for (int x = 0; x < SW; x++) fb[y * SW + x] = spriteColor(skyC);
     }
 
     const float HILL_FOV = 1.4f;
@@ -40,7 +41,7 @@ inline void renderMode7(uint16_t* fb, const Racer& player, uint32_t animTick) {
         if (hillH < 1) hillH = 1;
         int hy = HORIZON - hillH;
         if (hy < 0) hy = 0;
-        for (int y = hy; y < HORIZON; y++) fb[y * SW + x] = RGB(70, 95, 130);
+        for (int y = hy; y < HORIZON; y++) fb[y * SW + x] = spriteColor(RGB(70, 95, 130));
     }
 
     float camH = 15.0f;
@@ -69,7 +70,7 @@ inline void renderMode7(uint16_t* fb, const Racer& player, uint32_t animTick) {
 
         for (int x = 0; x < SW; x++) {
             if (isFoggy) {
-                fb[y * SW + x] = COL_SKY_BOT;
+                fb[y * SW + x] = spriteColor(COL_SKY_BOT);
             } else {
                 bool outOfBounds = (wx < 0 || wx >= MAP_W || wy < 0 || wy >= MAP_H);
                 int mapX = (int)wx;
@@ -102,7 +103,7 @@ inline void renderMode7(uint16_t* fb, const Racer& player, uint32_t animTick) {
                 if (depth > 60.0f) col = (col >> 1) & COL_DARKEN_MASK;
                 if (depth > 90.0f) col = (col >> 1) & COL_DARKEN_MASK;
 
-                fb[y * SW + x] = col;
+                fb[y * SW + x] = spriteColor(col);
             }
             wx += dx;
             wy += dy;
@@ -117,6 +118,7 @@ inline void renderMode7(uint16_t* fb, const Racer& player, uint32_t animTick) {
 //  isBraking: Fren yapiliyor mu (stop lambasi icin)
 // ============================================================
 inline void renderPlayerCar(uint16_t* fb, float steer, bool isBraking) {
+    if (!fb) return;
     int baseY = ROAD_H - 2;
     int cx = SW / 2 + (int)(steer * 12.0f);
 
@@ -125,7 +127,7 @@ inline void renderPlayerCar(uint16_t* fb, float steer, bool isBraking) {
         for (int x = cx - 12; x <= cx + 12; x++) {
             if (x < 0 || x >= SW) continue;
             if (x < cx - 6 || x > cx + 6) {
-                fb[y * SW + x] = RGB(15, 15, 15);
+                fb[y * SW + x] = spriteColor(RGB(15, 15, 15));
             }
         }
     }
@@ -134,34 +136,34 @@ inline void renderPlayerCar(uint16_t* fb, float steer, bool isBraking) {
         if (y < HORIZON || y >= ROAD_H) continue;
         for (int x = cx - 8; x <= cx + 8; x++) {
             if (x < 0 || x >= SW) continue;
-            fb[y * SW + x] = COL_CAR_BODY;
+            fb[y * SW + x] = spriteColor(COL_CAR_BODY);
         }
     }
 
     uint16_t tailColor = isBraking ? RGB(255, 50, 50) : RGB(100, 0, 0);
     for (int x = cx - 7; x <= cx - 4; x++) {
-        if (x >= 0 && x < SW) fb[(baseY - 4) * SW + x] = tailColor;
+        if (x >= 0 && x < SW) fb[(baseY - 4) * SW + x] = spriteColor(tailColor);
     }
     for (int x = cx + 4; x <= cx + 7; x++) {
-        if (x >= 0 && x < SW) fb[(baseY - 4) * SW + x] = tailColor;
+        if (x >= 0 && x < SW) fb[(baseY - 4) * SW + x] = spriteColor(tailColor);
     }
 
     for (int y = baseY - 10; y < baseY - 5; y++) {
         if (y < HORIZON || y >= ROAD_H) continue;
         for (int x = cx - 5; x <= cx + 5; x++) {
             if (x < 0 || x >= SW) continue;
-            if (y < baseY - 7) fb[y * SW + x] = RGB(30, 30, 40);
-            else fb[y * SW + x] = COL_CAR_BODY;
+            if (y < baseY - 7) fb[y * SW + x] = spriteColor(RGB(30, 30, 40));
+            else fb[y * SW + x] = spriteColor(COL_CAR_BODY);
         }
     }
 
     int spY = baseY - 11;
     if (spY >= HORIZON) {
         for (int x = cx - 10; x <= cx + 10; x++) {
-            if (x >= 0 && x < SW) fb[spY * SW + x] = RGB(220, 220, 220);
+            if (x >= 0 && x < SW) fb[spY * SW + x] = spriteColor(RGB(220, 220, 220));
         }
-        if (cx - 6 >= 0 && cx - 6 < SW) fb[(spY + 1) * SW + cx - 6] = RGB(100, 100, 100);
-        if (cx + 6 >= 0 && cx + 6 < SW) fb[(spY + 1) * SW + cx + 6] = RGB(100, 100, 100);
+        if (cx - 6 >= 0 && cx - 6 < SW) fb[(spY + 1) * SW + cx - 6] = spriteColor(RGB(100, 100, 100));
+        if (cx + 6 >= 0 && cx + 6 < SW) fb[(spY + 1) * SW + cx + 6] = spriteColor(RGB(100, 100, 100));
     }
 }
 
@@ -173,6 +175,7 @@ inline void renderPlayerCar(uint16_t* fb, float steer, bool isBraking) {
 //  color    : AI arac rengi (uint16_t)
 // ============================================================
 inline void renderAICar(uint16_t* fb, const Racer& ai, const Racer& player, uint16_t color) {
+    if (!fb) return;
     float cosA = cosf(player.angle);
     float sinA = sinf(player.angle);
 
@@ -209,9 +212,9 @@ inline void renderAICar(uint16_t* fb, const Racer& ai, const Racer& player, uint
         for (int px = sx - cw / 2; px <= sx + cw / 2; px++) {
             if (px < 0 || px >= SW) continue;
             if (px < sx - cw / 2 + tireW || px > sx + cw / 2 - tireW) {
-                fb[py * SW + px] = RGB(15, 15, 15);
+                fb[py * SW + px] = spriteColor(RGB(15, 15, 15));
             } else {
-                fb[py * SW + px] = color;
+                fb[py * SW + px] = spriteColor(color);
             }
         }
     }
@@ -222,21 +225,21 @@ inline void renderAICar(uint16_t* fb, const Racer& ai, const Racer& player, uint
         if (py < HORIZON || py >= ROAD_H) continue;
         for (int px = sx - cabW / 2; px <= sx + cabW / 2; px++) {
             if (px < 0 || px >= SW) continue;
-            if (py == cabTop) fb[py * SW + px] = color;
-            else fb[py * SW + px] = RGB(30, 30, 40);
+            if (py == cabTop) fb[py * SW + px] = spriteColor(color);
+            else fb[py * SW + px] = spriteColor(RGB(30, 30, 40));
         }
     }
 
     int spY = cabTop - constrain((int)(scaleY * 1.5f), 1, 6);
     if (spY >= HORIZON && spY < ROAD_H) {
         for (int px = sx - cw / 2; px <= sx + cw / 2; px++) {
-            if (px >= 0 && px < SW) fb[spY * SW + px] = ((color >> 1) & COL_DARKEN_MASK);
+            if (px >= 0 && px < SW) fb[spY * SW + px] = spriteColor(((color >> 1) & COL_DARKEN_MASK));
         }
         if (spY + 1 >= HORIZON && spY + 1 < ROAD_H) {
             int leg1 = sx - cabW / 2;
             int leg2 = sx + cabW / 2;
-            if (leg1 >= 0 && leg1 < SW) fb[(spY + 1) * SW + leg1] = RGB(100, 100, 100);
-            if (leg2 >= 0 && leg2 < SW) fb[(spY + 1) * SW + leg2] = RGB(100, 100, 100);
+            if (leg1 >= 0 && leg1 < SW) fb[(spY + 1) * SW + leg1] = spriteColor(RGB(100, 100, 100));
+            if (leg2 >= 0 && leg2 < SW) fb[(spY + 1) * SW + leg2] = spriteColor(RGB(100, 100, 100));
         }
     }
 }
@@ -247,6 +250,7 @@ inline void renderAICar(uint16_t* fb, const Racer& ai, const Racer& player, uint
 //  player : Oyuncu referansi (kamera uzayi icin)
 // ============================================================
 inline void renderPosts(uint16_t* fb, const Racer& player) {
+    if (!fb) return;
     float cosA = cosf(player.angle);
     float sinA = sinf(player.angle);
 
@@ -270,7 +274,7 @@ inline void renderPosts(uint16_t* fb, const Racer& player) {
         for (int y = topY; y <= baseY; y++) {
             uint16_t c = (((y / 3) & 1) ? COL_EDGE_A : COL_EDGE_B);
             for (int x = sx - pw / 2; x <= sx + pw / 2; x++) {
-                if (x >= 0 && x < SW) fb[y * SW + x] = c;
+                if (x >= 0 && x < SW) fb[y * SW + x] = spriteColor(c);
             }
         }
     }
@@ -290,7 +294,7 @@ inline void renderPosts(uint16_t* fb, const Racer& player) {
 //  showFps       : FPS gosterilsin mi
 // ============================================================
 inline void drawHUD(TFT_eSprite& canvas, const Racer& player, int playerLap,
-                    int playerNextCP, const int* aiLap, const int* aiCheckpoint,
+                    int playerNextCP, const Racer* aiCars, const int* aiLap, const int* aiCheckpoint,
                     uint32_t lastLapTime, uint32_t bestLapTime, int currentFPS, bool showFps) {
     canvas.fillRect(0, ROAD_H, SW, HUD_H, COL_HUD_BG);
     canvas.drawFastHLine(0, ROAD_H, SW, RGB(60, 60, 80));
@@ -318,17 +322,14 @@ inline void drawHUD(TFT_eSprite& canvas, const Racer& player, int playerLap,
     int displayedLap = (playerLap + 1 < TOTAL_LAPS) ? (playerLap + 1) : TOTAL_LAPS;
     canvas.printf("LAP:%d/%d", displayedLap, TOTAL_LAPS);
 
-    int pos = 1;
-    for (int i = 0; i < NUM_AI; i++) {
-        if (aiLap[i] > playerLap) pos++;
-        else if (aiLap[i] == playerLap && aiCheckpoint[i] > playerNextCP) pos++;
-    }
+    int pos = racePosition(player, playerLap, playerNextCP, aiCars, aiLap, aiCheckpoint);
     canvas.setTextColor(pos == 1 ? RGB(255, 220, 0) : RGB(200, 200, 200), COL_HUD_BG);
     canvas.setCursor(44, ROAD_H + 13);
     canvas.printf("POS:%d/%d", pos, NUM_AI + 1);
 
     char lapStr[32];
-    snprintf(lapStr, sizeof(lapStr), "Lap: %02lu.%02lus", lastLapTime / 1000, (lastLapTime % 1000) / 10);
+    snprintf(lapStr, sizeof(lapStr), "%02lu.%02lu", (unsigned long)min(lastLapTime / 1000, 9999UL),
+             (unsigned long)((lastLapTime % 1000) / 10));
     int lw = strlen(lapStr) * 6;
     canvas.setTextColor(RGB(180, 180, 180), COL_HUD_BG);
     canvas.setCursor(SW - lw - 2, ROAD_H + 3);
@@ -336,9 +337,10 @@ inline void drawHUD(TFT_eSprite& canvas, const Racer& player, int playerLap,
 
     char bestStr[32];
     if (bestLapTime > 0) {
-        snprintf(bestStr, sizeof(bestStr), "Best:%02lu.%02lus", bestLapTime / 1000, (bestLapTime % 1000) / 10);
+        snprintf(bestStr, sizeof(bestStr), "B%02lu.%02lu", (unsigned long)min(bestLapTime / 1000, 9999UL),
+                 (unsigned long)((bestLapTime % 1000) / 10));
     } else {
-        snprintf(bestStr, sizeof(bestStr), "Best:--.--s");
+        snprintf(bestStr, sizeof(bestStr), "B--.--");
     }
     int bw = strlen(bestStr) * 6;
     canvas.setTextColor(RGB(255, 100, 255), COL_HUD_BG);
@@ -434,10 +436,10 @@ inline void drawFinishScreen(TFT_eSprite& canvas, int pos, uint32_t bestLapTime,
     canvas.setCursor(30, 70);
     canvas.print("Best:  ");
     canvas.setTextColor(TFT_GREEN);
-    canvas.setTextSize(2);
-    canvas.setCursor(75, 64);
+    canvas.setCursor(75, 70);
     if (bestLapTime > 0)
-        canvas.printf("%lu.%01lu", bestLapTime / 1000, (bestLapTime % 1000) / 100);
+        canvas.printf("%lu.%02lu", (unsigned long)min(bestLapTime / 1000, 9999UL),
+                      (unsigned long)((bestLapTime % 1000) / 10));
     else
         canvas.print("--.-");
 
@@ -456,7 +458,7 @@ inline void drawFinishScreen(TFT_eSprite& canvas, int pos, uint32_t bestLapTime,
     canvas.print("A:Retry B:Menu");
     canvas.setTextColor(COL_HUD_BRIGHT);
     canvas.setCursor(20, 108);
-    canvas.print("B:OS Menu");
+    canvas.print("C:OS Menu");
 }
 
 // ============================================================
@@ -534,7 +536,7 @@ inline void drawRadar(U8G2_SH1106_128X64_NONAME_F_HW_I2C& oled, const Racer& pla
     oled.setCursor(2, 63);
     int displayedLap = (playerLap + 1 < TOTAL_LAPS) ? (playerLap + 1) : TOTAL_LAPS;
     oled.printf("LAP %d/%d", displayedLap, TOTAL_LAPS);
-    oled.setCursor(80, 63);
+    oled.setCursor(74, 63);
     oled.printf("SPD %d%%", constrain(spd, 0, 100));
 
     oled.sendBuffer();

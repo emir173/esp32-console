@@ -58,8 +58,9 @@ constexpr int   INVINCIBLE_MS  = 1500;
 constexpr int   FIRE_COOLDOWN  = 250;
 constexpr int   TARGET_FPS     = 60;
 constexpr int   FRAME_MS       = (1000 / TARGET_FPS);
+constexpr char HIGH_SCORE_KEY[] = "hs_space"; // NVS keys must fit in 15 characters.
 constexpr float SHAKE_DECAY    = 0.85f;
-constexpr int   FLASH_DURATION = 1;
+constexpr int   FLASH_DURATION_MS = 100;
 
 // ============ Joystick Advanced Processing ============
 constexpr int   JOY_DEADZONE_RADIUS    = 500;
@@ -118,7 +119,7 @@ constexpr int ALIEN_POINTS[4] = {40, 30, 20, 10};
 
 // ============ Ortak Veri Yapilari ============
 struct Bullet {
-    float x, y;
+    float x, y, previousY;
     uint16_t color;
     bool active;
 };

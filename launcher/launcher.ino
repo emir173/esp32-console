@@ -32,6 +32,7 @@
 #include <Preferences.h>     // NVS (Non-Volatile Storage) — ses ayarı, son oyun, skorlar
 #include <esp_ota_ops.h>     // ESP32 partition yönetimi — hızlı başlatma için boot partition seçer
 #include "../hardware_config.h"  // Pin tanımları, butonlar, joystick, SPI pinleri (ortak yapılandırma)
+#include "Input.h"
 #include "../GameBase.h"         // NOTE_* müzik notaları + osPlaySound ortak API
 #include "../dev_tools.h"        // USB Screenshot ve Dev Tools
 
@@ -123,6 +124,18 @@ uint32_t slideStartTime = 0; // Animasyon baslangic zamani
 
 int carouselSel = 0;         // (GERIYE DONUK UYUMLULUK) Secili oyun indexi (0-12)
 bool oledReady = false;      // OLED başlatıldı mı?
+bool sdReady = false;
+bool framebufferReady = false;
+LauncherInput menuInput;
+
+// All intervals below are shorter than INT32_MAX milliseconds.
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+    return (int32_t)(now - deadline) >= 0;
+}
+
+uint32_t deadlineRemaining(uint32_t now, uint32_t deadline) {
+    return deadlineReached(now, deadline) ? 0 : deadline - now;
+}
 
 // --- V2.1 EKLENTİSİ --- Ses açık/kapalı durumu (global, NVS'ten okunur)
 bool soundEnabled = true;
@@ -156,9 +169,9 @@ void playSound(uint16_t freq, uint32_t dur) {
     if (soundEnabled) {
         static uint32_t lastToneTime = 0;
         static uint32_t lastDur = 0;
-        if (getDevMillis() - lastToneTime >= lastDur) {
+        if (millis() - lastToneTime >= lastDur) {
             osBuzzerPlay(freq, dur);   // LEDC + volume (oto-durdurma)
-            lastToneTime = getDevMillis();
+            lastToneTime = millis();
             lastDur = dur;
         }
     }
@@ -218,7 +231,7 @@ void initColorsAndGames() {
     games[3].filename = "/space.bin";
     games[3].primaryColor = RGB_FIX(220, 60, 255);
     games[3].dimColor = RGB_FIX(70, 20, 80);
-    games[3].hsKey = "hs_spaceinvaders";
+    games[3].hsKey = "hs_space";
 
     // ARKANOID
     games[4].label = "ARKANOID";
@@ -253,7 +266,7 @@ void initColorsAndGames() {
     games[8].filename = "/strike.bin";
     games[8].primaryColor = RGB_FIX(100, 200, 255);
     games[8].dimColor = RGB_FIX(40, 80, 100);
-    games[8].hsKey = "hs_galacticstrike";
+    games[8].hsKey = "hs_strike";
 
     // PLATFORMER
     games[9].label = "PLATFORMER";
@@ -327,165 +340,176 @@ void initColorsAndGames() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  ERKEN BOOTLOADER — FLASH YAZMA (DOKUNULMADI!)
+//  ERKEN BOOTLOADER — FLASH YAZMA
 // ══════════════════════════════════════════════════════════════
 
 // SD karttan hedef .bin dosyasını OTA ile flash'a yazan bootloader
-// Bu fonksiyonun mantığı AYNEN korunmuştur — sadece OLED mesajları var
 //
 // Akış:
 //   1. OLED'de "BOOTLOADER" mesajı göster
 //   2. SD karttan .bin dosyasını aç
-//   3. İlk 4 byte'ı kontrol et — ESP32 firmware magic byte 0xE9 olmalı
+//   3. Header, dosya boyutu ve hedef OTA partition kontrolü
 //   4. Update.begin() ile flash yazma modunu başlat
-//   5. 4KB bloklar halinde SD → flash aktar (DMA uyumlu internal RAM)
+//   5. 16KB bloklarla dosyanın tamamını SD → flash aktar
 //   6. Her saniye OLED'de ilerleme yüzdesi ve çubuk göster
 //   7. Başarı: NVS'e kaydet + ESP.restart() → yeni oyuna geç
-//      Hata:   kullanıcı BTN_B'ye basana kadar bekle
+//      Hata:   hata mesajından sonra launcher menüsüne dön
 //
 // Parametre: filename — SD karttaki .bin dosya yolu (örn: "/snake.bin")
 // Return: yok — başarı durumunda ESP.restart() ile çıkılır
+// Cache identity includes the actual OTA image, not just its filename.
+const esp_partition_t* gamePartition() {
+    return esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                   ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+}
+
+bool clearGameCache() {
+    Preferences prefs;
+    if (!prefs.begin("os", false)) return false;
+    bool ok = !prefs.isKey("last_game") || prefs.remove("last_game");
+    prefs.remove("game_sha");
+    prefs.remove("game_part");
+    prefs.end();
+    return ok;
+}
+
+bool cachedGameMatches(const char* filename) {
+    const esp_partition_t* part = gamePartition();
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (!part || !running || part->address == running->address) return false;
+    Preferences prefs;
+    if (!prefs.begin("os", true)) return false;
+    uint8_t savedHash[32];
+    bool matches = prefs.getString("last_game", "") == String(filename)
+                && prefs.getUInt("game_part", 0) == part->address
+                && prefs.getBytesLength("game_sha") == sizeof(savedHash)
+                && prefs.getBytes("game_sha", savedHash, sizeof(savedHash)) == sizeof(savedHash);
+    prefs.end();
+    if (!matches) return false;
+    uint8_t imageHash[32];
+    return esp_partition_get_sha256(part, imageHash) == ESP_OK
+        && memcmp(savedHash, imageHash, sizeof(imageHash)) == 0;
+}
+
+bool saveGameCache(const char* filename) {
+    const esp_partition_t* part = gamePartition();
+    uint8_t imageHash[32];
+    if (!part || esp_partition_get_sha256(part, imageHash) != ESP_OK) return false;
+    Preferences prefs;
+    if (!prefs.begin("os", false)) return false;
+    // Publish the filename last. A reset or failed write leaves no usable cache.
+    bool ok = prefs.putBytes("game_sha", imageHash, sizeof(imageHash)) == sizeof(imageHash)
+           && prefs.putUInt("game_part", part->address) == sizeof(uint32_t)
+           && prefs.putString("last_game", filename) == strlen(filename);
+    if (!ok) prefs.remove("last_game");
+    prefs.end();
+    return ok;
+}
+
+void bootError(const char* message) {
+    oled.clearBuffer();
+    oled.drawStr(2, 24, message);
+    oled.drawStr(2, 44, "Returning to menu...");
+    oled.sendBuffer();
+    delay(1500);
+}
+
 void runEarlyBootloader(const char* filename) {
-    // OLED'i aç ve bootloader başlangıç ekranını çiz
     oled.begin();
+    oled.setPowerSave(0);
     oled.clearBuffer();
     oled.setFont(u8g2_font_6x10_tr);
     oled.drawStr(19, 24, "Loading game...");
     oled.sendBuffer();
 
-    // .bin dosyasını SD karttan okuma modunda aç
+    // OTA_0 contains the launcher; never write it from an unexpected slot.
+    const esp_partition_t* target = gamePartition();
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+    if (!target || !running || !next
+        || running->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0
+        || next->address != target->address) {
+        bootError("PARTITION ERROR!");
+        return;
+    }
     File binFile = SD.open(filename, FILE_READ);
-    if (!binFile) {
-        // Dosya bulunamadı — hata ekranı göster ve BTN_B beklenip geri dön
-        oled.clearBuffer();
-        oled.drawStr(19, 20, "ERROR: NO FILE!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50); // B basılana kadar bekle
+    if (!binFile || binFile.isDirectory()) {
+        binFile.close();
+        bootError("ERROR: NO FILE!");
         return;
     }
-
     size_t fileSize = binFile.size();
-    // ESP32 firmware magic byte kontrolu — gecersiz .bin dosyalarini reddet
-    // Geçerli bir ESP32 .bin dosyası en az 4 byte olmalı (header)
-    if (fileSize < 4) {
+    uint8_t headerCheck[24];
+    if (fileSize < sizeof(headerCheck) || fileSize > target->size
+        || binFile.read(headerCheck, sizeof(headerCheck)) != sizeof(headerCheck)
+        || headerCheck[0] != 0xE9 || !binFile.seek(0)) {
         binFile.close();
-        oled.clearBuffer();
-        oled.drawStr(4, 20, "ERROR: INVALID FILE!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50);
+        bootError("ERROR: INVALID BIN!");
         return;
     }
-    // İlk 4 byte'ı oku — ESP32 firmware imzası 0xE9 ile başlar
-    uint8_t headerCheck[4];
-    binFile.read(headerCheck, 4);
-    if (headerCheck[0] != 0xE9) {
-        // Magic byte eşleşmedi — bu bir ESP32 firmware dosyası değil
+    // Invalidate before any erase/write, even if power is lost mid-transfer.
+    if (!clearGameCache()) {
         binFile.close();
-        oled.clearBuffer();
-        oled.drawStr(7, 20, "ERROR: INVALID BIN!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50);
+        bootError("NVS WRITE ERROR!");
         return;
     }
-    // Başa sar — yazma işlemi dosyanın en başından başlamalı
-    binFile.seek(0);
-    // Update.begin() flash yazma modunu açar; fileSize kadar yer ayrılır
     if (!Update.begin(fileSize)) {
-        // Flash'ta yeterli boş alan yok — yazma reddedildi
         binFile.close();
-        oled.clearBuffer();
-        oled.drawStr(10, 20, "ERROR: FLASH FULL!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50);
+        bootError("FLASH BEGIN ERROR!");
         return;
     }
-
-    // PSRAM darboğazını aşmak için donanımsal DMA uyumlu İç RAM kullanıyoruz (4KB)
-    // 4096 byte = standart flash sector boyutuna optimal hizalama
     static uint8_t buf[16384];
     size_t written = 0;
     bool flashError = false;
-    uint32_t lastDraw = 0; // OLED ekran güncelleme zamanlayıcı (1Hz)
-
-    // SD → Flash ana aktarım döngüsü
-    while (binFile.available()) {
-        // 4KB blok oku
-        int bytesRead = binFile.read(buf, sizeof(buf));
-        if (bytesRead <= 0) break; // Okuma hatası
-
-        // Okunan byte'ları flash'a yaz — yazılan miktar eşleşmezse hata
-        if (Update.write(buf, bytesRead) != (size_t)bytesRead) {
+    uint32_t lastDraw = 0;
+    while (written < fileSize) {
+        size_t toRead = min(sizeof(buf), fileSize - written);
+        int bytesRead = binFile.read(buf, toRead);
+        if (bytesRead <= 0 || (size_t)bytesRead > toRead
+            || Update.write(buf, bytesRead) != (size_t)bytesRead) {
             flashError = true;
             break;
         }
         written += bytesRead;
-
-        // Saniyede bir kez (veya tamamlandığında) OLED ilerleme göstergesi güncelle
-        uint32_t now = getDevMillis();
+        uint32_t now = millis();
         if (now - lastDraw > 1000 || written == fileSize) {
             lastDraw = now;
-            // Yüzde hesapla: (yazılan / toplam) * 100
             int pct = (written * 100) / fileSize;
-            oled.clearBuffer();
-            oled.setFont(u8g2_font_6x10_tr);
-            oled.drawStr(31, 12, "FLASHING...");
             char progStr[24];
-            // "45%  230K/512K" formatında ilerleme satırı
-            snprintf(progStr, sizeof(progStr), "%d%%  %dK/%dK", pct, (int)(written/1024), (int)(fileSize/1024));
+            snprintf(progStr, sizeof(progStr), "%d%%  %dK/%dK", pct,
+                     (int)(written / 1024), (int)(fileSize / 1024));
+            oled.clearBuffer();
+            oled.drawStr(31, 12, "FLASHING...");
             oled.drawStr(19, 28, progStr);
-            // Dış çerçeve (128px genişlik)
             oled.drawFrame(0, 40, 128, 14);
-            // İç dolgu çubuğu — yüzdeye göre ölçeklenir (124px max)
-            int barW = (124 * pct) / 100;
-            if (barW > 0) oled.drawBox(2, 42, barW, 10);
+            oled.drawBox(2, 42, 124 * pct / 100, 10);
             oled.sendBuffer();
         }
+        yield();
     }
     binFile.close();
-
-    // Aktarım sırasında hata oluştu — flash yazma yarıda kesildi
-    if (flashError) {
-        oled.clearBuffer();
-        oled.drawStr(10, 20, "FLASH WRITE ERROR!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50);
+    if (flashError || written != fileSize) {
+        Update.abort();
+        bootError("FLASH READ/WRITE ERR!");
         return;
     }
-
-    // Update.end(true) yazmayı bitirip doğrulama (hash/checksum) yapar
-    if (Update.end(true)) {
-        // Başarılı — doğrulandı
-        oled.clearBuffer();
-        oled.setFont(u8g2_font_6x10_tr);
-        oled.drawStr(19, 20, "UPLOAD SUCCESS!");
-        oled.drawStr(16, 40, "Starting game...");
-        // Dolu ilerleme çubuğu — %100 bitti
-        oled.drawFrame(0, 50, 128, 10);
-        oled.drawBox(2, 52, 124, 6);
-        oled.sendBuffer();
-
-        // --- V2.2: Yükleme Başarılı ekranı 1 saniye kalsın ve temizlensin ---
-        if (soundEnabled) osBuzzerPlay(659, 50); // Başarı sesi (sadece ses açıkken)
-        delay(250);
-        oled.clearBuffer();
-        oled.sendBuffer();
-        osBuzzerOff();
-        // ----------------------------------------------------------------
-
-        // NVS'e yeni oyunu kaydet — sonraki açılışta "hızlı başlatma" için
-        Preferences prefs;
-        prefs.begin("os", false); // false = oku/yaz modu
-        prefs.putString("last_game", filename);
-        prefs.end();
-
-        ESP.restart(); // Yeni oyuna geçiş yap — bu satırdan sonra kod çalışmaz
-    } else {
-        // Doğrulama başarısız — flash yazma bozuk olabilir
-        oled.clearBuffer();
-        oled.drawStr(25, 20, "VERIFY ERROR!");
-        oled.sendBuffer();
-        while (digitalRead(BTN_B)) delay(50);
+    // Exact length required. end(true) would accept a premature SD EOF.
+    if (!Update.end()) {
+        Update.abort();
+        bootError("VERIFY ERROR!");
+        return;
     }
+    if (!saveGameCache(filename)) Serial.println("Game loaded; fast-boot cache unavailable.");
+    oled.clearBuffer();
+    oled.drawStr(19, 20, "UPLOAD SUCCESS!");
+    oled.drawStr(16, 40, "Starting game...");
+    oled.sendBuffer();
+    if (soundEnabled) osBuzzerPlay(NOTE_E5, 50);
+    delay(250);
+    oled.clearBuffer();
+    oled.sendBuffer();
+    osBuzzerOff();
+    ESP.restart();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -901,7 +925,7 @@ void renderFrameToSprite() {
 
     // FPS Hesaplama
     frameCount++;
-    unsigned long now = getDevMillis();
+    unsigned long now = millis();
     if (now - lastFpsTime >= 1000) {
         currentFps = frameCount;
         frameCount = 0;
@@ -1140,9 +1164,27 @@ void updateOLED(int sel) {
 //
 // Parametre: yok (global soundEnabled okur/yazar)
 // Return: yok — çıkışta drawCarousel(true) çağrılır
+bool saveSettings(int volume, bool fps, bool resetRecords) {
+    Preferences prefs;
+    if (!prefs.begin("os", false)) return false;
+    bool ok = prefs.putBool("sound_en", volume > 0) == 1
+           && prefs.putUChar("snd_vol", (uint8_t)volume) == 1
+           && prefs.putBool("show_fps", fps) == 1;
+    if (ok && resetRecords) {
+        for (int i = 0; i < GAME_COUNT; i++) {
+            const char* key = games[i].hsKey;
+            if (key && key[0] && prefs.isKey(key) && !prefs.remove(key)) ok = false;
+        }
+        if (prefs.isKey("ach_dungeon") && !prefs.remove("ach_dungeon")) ok = false;
+    }
+    prefs.end();
+    return ok;
+}
+
 void openSettingsMenu() {
-    // Menuyu acan A tusunun birakilmasini bekle (aninda geri kapanmamasi icin)
-    while(!digitalRead(BTN_A)) { yield(); }
+    // Açan tuş basılıysa bırakılıp yeniden basılana kadar eylem üretmez.
+    LauncherInput input;
+    input.reset(millis());
 
     // Acilis sesi ve kisa gecikme
     playSound(NOTE_E5, 50);
@@ -1150,7 +1192,7 @@ void openSettingsMenu() {
 
     // Lokal kopya — kullanıcı iptal ederse değişiklik kaybolur
     // Ses artik 3 kademe: 0=Kapali, 1=Kisik, 2=Yuksek (yazilimsal duty volume)
-    int  localVol = soundEnabled ? (osSoundVolume >= 1 ? osSoundVolume : 2) : 0;
+    int localVol = soundEnabled ? constrain((int)osSoundVolume, 1, 2) : 0;
     uint8_t prevVol = osSoundVolume;   // iptal edilirse canli onizleme geri alinir
     bool localFps = showFpsEnabled;
     bool localReset = false;           // Rekor sifirlama secimi
@@ -1234,7 +1276,7 @@ void openSettingsMenu() {
         if (localReset) {
             fb.setTextColor(COL_SUCCESS);
             fb.setCursor(76, 78);
-            fb.print("CLEARED!");
+            fb.print("ON SAVE");
         } else if (settingsSel == 2) {
             fb.setTextColor(COL_DANGER);
             fb.setCursor(76, 78);
@@ -1265,20 +1307,29 @@ void openSettingsMenu() {
         // ─── Kullanıcı girişi bekleme döngüsü ───
         bool inputReceived = false;
         while (!inputReceived) {
+            uint32_t inputNow = millis();
+            input.update(inputNow);
+            // Cancel has priority, and discards a pending records reset.
+            if (input.b.pressed) {
+                osSetVolume(prevVol);
+                osBuzzerOff();
+                settingsOpen = false;
+                break;
+            }
             // Y ekseni ile menüde gezin
             int jy = analogRead(JOY_Y) - joyCenterY;
-                if (abs(jy) > 500 && (getDevMillis() - lastSettingsMove > 180)) {
+                if (abs(jy) > 500 && (millis() - lastSettingsMove > 180)) {
                 if (jy > 0 && settingsSel < 2) settingsSel++;
                 else if (jy < 0 && settingsSel > 0) settingsSel--;
                 playSound(NOTE_F4, 25);
                 inputReceived = true;
-                lastSettingsMove = getDevMillis();
+                lastSettingsMove = millis();
             }
 
             // X ekseni ile değeri değiştir
 
             int jx = analogRead(JOY_X) - joyCenterX;
-                if (abs(jx) > 500 && (getDevMillis() - lastSettingsMove > 180)) {
+                if (abs(jx) > 500 && (millis() - lastSettingsMove > 180)) {
                 if (settingsSel == 0) {
                     // Ses seviyesi: sag(+)=arttir, sol(-)=azalt, 0..2 sinirli
                     if (jx > 0 && localVol < 2) localVol++;
@@ -1294,16 +1345,18 @@ void openSettingsMenu() {
             }
 
             // BTN_A ile kaydet ve çık
-            if (!digitalRead(BTN_A)) {
-                yieldWait(50);
-                if (!digitalRead(BTN_A)) {
+            if (input.a.pressed) {
+                {
                     bool exitMenu = true;
 
                     // Records: Reset logic with interactive progress bar
                     if (settingsSel == 2 && !localReset) {
+                        exitMenu = false;
                         uint32_t holdStart = millis();
                         bool cleared = false;
-                        while (!digitalRead(BTN_A)) {
+                        while (input.a.down()) {
+                            input.update(millis());
+                            if (input.b.pressed || !input.a.down()) break;
                             uint32_t elapsed = millis() - holdStart;
                             float progress = (float)elapsed / 2000.0f;
                             if (progress > 1.0f) progress = 1.0f;
@@ -1324,16 +1377,7 @@ void openSettingsMenu() {
                             fb.pushSprite(0, 0);
 
                             if (elapsed >= 2000) { // 2 saniye doldu
-                                Preferences prefs;
-                                prefs.begin("os", false);
-                                for(int i = 0; i < GAME_COUNT; i++) {
-                                    if(games[i].hsKey != nullptr && strlen(games[i].hsKey) > 0) {
-                                        prefs.remove(games[i].hsKey);
-                                    }
-                                }
-                                prefs.remove("ach_dungeon");
-                                prefs.end();
-                                
+                                // Stage deletion until A:Save; B:Cancel keeps records.
                                 playSound(NOTE_C5, 100);
                                 delay(100);
                                 playSound(NOTE_E5, 150);
@@ -1341,7 +1385,7 @@ void openSettingsMenu() {
                                 localReset = true;
                                 cleared = true;
 
-                                // ─── Elini çekmeden ANINDA CLEARED! çiz ───
+                                // Silme isteğini göster; ikinci A basışı kaydeder.
                                 fb.fillRect(18, 74, 124, 16, RGB_FIX(25, 25, 50));
                                 fb.drawRect(18, 74, 124, 16, COL_ACCENT);
                                 fb.setTextColor(COL_GRAY);
@@ -1349,7 +1393,7 @@ void openSettingsMenu() {
                                 fb.print("Records:");
                                 fb.setTextColor(COL_SUCCESS);
                                 fb.setCursor(76, 78);
-                                fb.print("CLEARED!");
+                                fb.print("ON SAVE");
                                 checkScreenshot(fb);
                                 fb.pushSprite(0, 0);
 
@@ -1358,11 +1402,16 @@ void openSettingsMenu() {
                             yieldWait(15);
                         }
 
+                        if (input.b.pressed) {
+                            osSetVolume(prevVol);
+                            osBuzzerOff();
+                            settingsOpen = false;
+                        }
                         if (cleared) {
                             exitMenu = false;
                             inputReceived = true;
-                            // Elini çekene kadar bekle (ekranda CLEARED! sabit kalır)
-                            while (!digitalRead(BTN_A)) yieldWait(10);
+                            // Basılı A tekrar kaydetmesin; B her zaman çıkabilir.
+                            input.reset(millis());
                         } else {
                             // Erken bıraktıysa ekranı normale döndür
                             inputReceived = true;
@@ -1370,41 +1419,29 @@ void openSettingsMenu() {
                     }
 
                     if (exitMenu) {
+                        if (!saveSettings(localVol, localFps, localReset)) {
+                            fb.fillRect(20, 94, 120, 10, COL_BG_DARK);
+                            fb.setCursor(22, 94); fb.print("NVS SAVE ERROR!");
+                            fb.pushSprite(0, 0);
+                            yieldWait(1000);
+                            input.reset(millis());
+                            inputReceived = true;
+                            continue;
+                        }
                         soundEnabled = (localVol > 0);
                         osSetVolume(localVol);
                         showFpsEnabled = localFps;
-                        Preferences prefs;
-                        prefs.begin("os", false);
-                        prefs.putBool("sound_en", soundEnabled);
-                        prefs.putUChar("snd_vol", (uint8_t)localVol);
-                        prefs.putBool("show_fps", showFpsEnabled);
-                        prefs.end();
-
                         playSound(NOTE_E5, 50);
                         delay(60);
                         playSound(NOTE_G5, 40);
                         delay(50);
                         osBuzzerOff();
 
-                        while(!digitalRead(BTN_A)) { yield(); }
+                        input.reset(millis());
 
                         settingsOpen = false;
                         inputReceived = true;
                     }
-                }
-            }
-
-            // BTN_B ile iptal et ve çık
-            if (!digitalRead(BTN_B)) {
-                yieldWait(50);
-                if (!digitalRead(BTN_B)) {
-                    osSetVolume(prevVol);   // canli onizlemeyi geri al (kaydetme yok)
-                    playSound(NOTE_G4, 40);
-                    delay(80);
-                    osBuzzerOff();
-
-                    settingsOpen = false;
-                    inputReceived = true;
                 }
             }
 
@@ -1423,7 +1460,7 @@ void openSettingsMenu() {
 // 3 sekmeli araç uygulaması: Kronometre / Geri Sayım / Metronom.
 // SETTINGS popup'ından farkı: BLOK EDEN input bekleme YOK — her karede zaman
 // güncellenir (kronometre sayarken/metronom çalarken donmaz). Butonlar kenar
-// tespitiyle (prev→now) okunur, joystick debounce ile.
+// tespiti ve debounce ile okunur; açılışta basılı tuşlar devralınmaz.
 //
 // Kontroller:
 //   C           : Sekme değiştir (SW → TIMER → METRO)
@@ -1446,8 +1483,9 @@ static void osToolHints(const char* a, const char* b, const char* c, const char*
 }
 
 void openToolsMenu() {
-    // Açan A tuşunun bırakılmasını bekle (anında tetiklenmesin)
-    while (!digitalRead(BTN_A)) { yield(); }
+    // Açan A basışı araçta başlat/durdur işlemi üretmez.
+    LauncherInput input;
+    input.reset(millis());
     playSound(NOTE_E5, 50); delay(60); osBuzzerOff();
 
     enum { TOOL_SW = 0, TOOL_TIMER = 1, TOOL_METRO = 2 };
@@ -1457,7 +1495,7 @@ void openToolsMenu() {
     // Kronometre durumu
     bool     swRun   = false;
     uint32_t swAccum = 0;   // duraklatınca birikmiş ms
-    uint32_t swStart = 0;   // son başlatma anı (getDevMillis)
+    uint32_t swStart = 0;   // son başlatma anı (millis)
 
     // Geri sayım durumu
     int      timerSetSec = 60;      // ayarlı süre (sn) — 30..3600
@@ -1475,16 +1513,18 @@ void openToolsMenu() {
     uint32_t beatFlash = 0;         // görsel nabız için
 
     // Buton kenar tespiti
-    bool prevA = true, prevB = true, prevC = true, prevD = true;
+    // Debounced buttons are polled independently of drawing.
     uint32_t lastJoy = 0;
 
     bool open = true;
     while (open) {
-        uint32_t now = getDevMillis();
+        uint32_t now = millis();
+        input.update(now);
+        if (input.b.pressed) { osBuzzerOff(); break; }
 
         // ─── Geri sayım: her karede kontrol (sekmeden bağımsız arka planda biter) ───
         if (timerRun) {
-            if (now >= timerEndMs) {
+            if (deadlineReached(now, timerEndMs)) {
                 timerRun = false;
                 timerAlarm = true;
                 tool = TOOL_TIMER;      // alarmı görmesi için sekmeye geç
@@ -1499,7 +1539,7 @@ void openToolsMenu() {
 
         // ─── Metronom tık üretimi (sadece bu sekmedeyken) ───
         if (metroRun && tool == TOOL_METRO) {
-            if (now >= nextBeat) {
+            if (deadlineReached(now, nextBeat)) {
                 bool accent = (beatIdx == 0);
                 playSound(accent ? NOTE_G5 : NOTE_C5, 22);   // vurgu = tavan nota (784Hz), normal = C5
                 beatFlash = now;
@@ -1507,7 +1547,7 @@ void openToolsMenu() {
                 uint32_t interval = 60000UL / (uint32_t)bpm;
                 // Kaymayı önlemek için nextBeat'i sabit adımla ilerlet
                 nextBeat += interval;
-                if (now > nextBeat) nextBeat = now + interval; // gecikme birikirse resenkron
+                if (deadlineReached(now, nextBeat)) nextBeat = now + interval; // gecikme birikirse resenkron
             }
         }
 
@@ -1549,7 +1589,7 @@ void openToolsMenu() {
         } else if (tool == TOOL_TIMER) {
             // ─── Geri Sayım — MM:SS ───
             uint32_t rem = timerAlarm ? 0
-                          : (timerRun ? (timerEndMs > now ? timerEndMs - now : 0)
+                          : (timerRun ? (deadlineRemaining(now, timerEndMs))
                                       : timerRemPaused);
             uint32_t mm = (rem + 999) / 60000;              // yukarı yuvarla (görsel)
             uint32_t ss = ((rem + 999) / 1000) % 60;
@@ -1599,18 +1639,15 @@ void openToolsMenu() {
         fb.pushSprite(0, 0);
 
         // ══════════════════ GİRİŞ ══════════════════
-        bool aNow = digitalRead(BTN_A), bNow = digitalRead(BTN_B);
-        bool cNow = digitalRead(BTN_C), dNow = digitalRead(BTN_D);
-
         // C — sekme değiştir (metronomu durdur, tık karışmasın)
-        if (prevC && !cNow) {
+        if (input.c.pressed) {
             tool = (tool + 1) % 3;
             metroRun = false; osBuzzerOff();
             playSound(NOTE_A4, 25);
         }
 
         // A — başlat/duraklat (araca göre)
-        if (prevA && !aNow) {
+        if (input.a.pressed && !input.c.pressed) {
             if (tool == TOOL_SW) {
                 if (swRun) { swAccum += now - swStart; swRun = false; }
                 else       { swStart = now; swRun = true; }
@@ -1620,7 +1657,7 @@ void openToolsMenu() {
                     timerAlarm = false; osBuzzerOff();
                     timerRemPaused = (uint32_t)timerSetSec * 1000;
                 } else if (timerRun) {                  // duraklat
-                    timerRemPaused = (timerEndMs > now ? timerEndMs - now : 0);
+                    timerRemPaused = (deadlineRemaining(now, timerEndMs));
                     timerRun = false;
                 } else {                                // başlat (kalan süreyle)
                     if (timerRemPaused == 0) timerRemPaused = (uint32_t)timerSetSec * 1000;
@@ -1636,7 +1673,7 @@ void openToolsMenu() {
         }
 
         // D — sıfırla
-        if (prevD && !dNow) {
+        if (input.d.pressed && !input.c.pressed && !input.a.pressed) {
             if (tool == TOOL_SW) {
                 swRun = false; swAccum = 0; swStart = now;
                 playSound(NOTE_F4, 25);
@@ -1668,15 +1705,6 @@ void openToolsMenu() {
             }
         }
 
-        // B — çık
-        if (prevB && !bNow) {
-            osBuzzerOff();
-            playSound(NOTE_G4, 40); delay(60); osBuzzerOff();
-            while (!digitalRead(BTN_B)) { yield(); }  // B bırakılmasını bekle
-            open = false;
-        }
-
-        prevA = aNow; prevB = bNow; prevC = cNow; prevD = dNow;
         yield();  // FreeRTOS nefesi + watchdog
     }
 
@@ -1718,7 +1746,8 @@ static const uint8_t DRAW_EMPTY = 0xFF;   // boş hücre = arka plan
 // içinde `static grid`'te korunur; joystick-tık = tuvali temizle.
 
 void openDrawApp() {
-    while (!digitalRead(BTN_A)) { yield(); }   // açan A bırakılsın
+    LauncherInput input;
+    input.reset(millis());
     playSound(NOTE_E5, 40); delay(50); osBuzzerOff();
 
     static uint8_t grid[DRAW_GH][DRAW_GW];
@@ -1735,13 +1764,15 @@ void openDrawApp() {
     // OLED'i uyandır (menüde uyku modundaydı)
     if (oledReady) oled.setPowerSave(0);
 
-    bool prevB = true, prevC = true, prevSW = true;
+    // Held entry buttons are suppressed until released.
     uint32_t lastMove = 0, lastHud = 0;
     bool hudDirty = true;
 
     bool open = true;
     while (open) {
-        uint32_t now = getDevMillis();
+        uint32_t now = millis();
+        input.update(now);
+        if (input.b.pressed) { osBuzzerOff(); break; }
 
         // ─── Giriş: imleç hareketi (hücre hücre, tekrar hızı 55ms) ───
         int jx = analogRead(JOY_X) - joyCenterX;
@@ -1756,30 +1787,18 @@ void openDrawApp() {
         }
 
         // ─── Çiz / Sil (basılı tutunca sürekli) ───
-        if (!digitalRead(BTN_A)) grid[cy][cx] = (uint8_t)curColor;
-        if (!digitalRead(BTN_D)) grid[cy][cx] = DRAW_EMPTY;
+        if (input.a.held()) grid[cy][cx] = (uint8_t)curColor;
+        if (input.d.held()) grid[cy][cx] = DRAW_EMPTY;
 
         // ─── Renk döngüsü (C, kenar) ───
-        bool cNow = digitalRead(BTN_C);
-        if (prevC && !cNow) { curColor = (curColor + 1) % 8; hudDirty = true; playSound(NOTE_A4, 20); }
+        if (input.c.pressed) { curColor = (curColor + 1) % 8; hudDirty = true; playSound(NOTE_A4, 20); }
 
         // ─── Temizle (joystick tık, kenar) — tüm tuvali sil ───
-        bool swNow = digitalRead(JOY_SW);
-        if (prevSW && !swNow) {
+        if (input.joy.pressed) {
             memset(grid, DRAW_EMPTY, sizeof(grid));
             hudDirty = true;
             playSound(NOTE_F4, 30); delay(30); playSound(NOTE_C4, 40); osBuzzerOff();
         }
-
-        // ─── Çık (B, kenar) ───
-        bool bNow = digitalRead(BTN_B);
-        if (prevB && !bNow) {
-            playSound(NOTE_G4, 40); delay(60); osBuzzerOff();
-            while (!digitalRead(BTN_B)) { yield(); }
-            open = false;
-        }
-
-        prevC = cNow; prevSW = swNow; prevB = bNow;
 
         // ══════════════ TFT ÇİZİM ══════════════
         // Üst palet şeridi (0..12)
@@ -1852,10 +1871,43 @@ void openDrawApp() {
 //  10. OLED başlat + ilk carousel çizimi
 // Parametre: yok
 // Return: yok (Arduino setup imzası)
+void calibrateLauncherJoystick() {
+    uint32_t start = millis();
+    int x = analogRead(JOY_X), y = analogRead(JOY_Y);
+    bool warningShown = false;
+    while (x < 1400 || x > 2600 || y < 1400 || y > 2600) {
+        if (!warningShown) {
+            fb.fillScreen(COL_BLACK); fb.setTextColor(COL_DANGER);
+            fb.setTextSize(1); fb.setCursor(23, 60);
+            fb.print("RELEASE JOYSTICK!"); fb.pushSprite(0, 0);
+            warningShown = true;
+        }
+        if (millis() - start >= 5000) {
+            joyCenterX = joyCenterY = 2048;
+            return;
+        }
+        delay(50);
+        x = analogRead(JOY_X); y = analogRead(JOY_Y);
+    }
+    fb.fillScreen(COL_BLACK); fb.setTextColor(COL_ACCENT);
+    fb.setTextSize(1); fb.setCursor(38, 58);
+    fb.print("Calibration..."); fb.pushSprite(0, 0);
+    long sumX = 0, sumY = 0;
+    for (int i = 0; i < 10; i++) {
+        x = analogRead(JOY_X); y = analogRead(JOY_Y);
+        if (x < 1400 || x > 2600 || y < 1400 || y > 2600) {
+            joyCenterX = joyCenterY = 2048;
+            return;
+        }
+        sumX += x; sumY += y; delay(2);
+    }
+    joyCenterX = sumX / 10; joyCenterY = sumY / 10;
+}
+
 void setup() {
     // ─── BÖLÜM 1: Seri port + I2C hattı ───
     Serial.begin(115200);       // Debug için seri port
-    startFrameDumper();         // Async USB Screenshot Dumper baslat
+    // Start screenshot buffers only after bootloader work and framebuffer allocation.
     Wire.begin(8, 9);           // I2C: SDA=8, SCL=9 (OLED için)
     Wire.setClock(400000);      // 400kHz hız — OLED tazelemesini hızlandırır
 
@@ -1885,18 +1937,19 @@ void setup() {
     // ─── BÖLÜM 4: SPI hattı + SD kart başlatma ───
     // SPI hattını başlat
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, -1); delay(50);
-    bool sdReady = SD.begin(SD_CS, SPI, 20000000); // 20 MHz (sweet spot - kararli ve hizli)
+    sdReady = SD.begin(SD_CS, SPI, 20000000); // 20 MHz (sweet spot - kararli ve hizli)
 
-    // SD kart yoksa hata ekranı göster ve dur
-    // Bootloader'ın dosyayı okuyabilmesi için SD şart
-    if (!sdReady) {
-        tft.init(); tft.setRotation(1); tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(RGB_FIX(255,80,0)); tft.setTextSize(1);
-        tft.setCursor(47, 55); tft.print("NO SD CARD!");
-        tft.setCursor(20, 70); tft.print("Insert card & reset.");
-        while(1) delay(100); // Sonsuz döngü — reset beklenir
+    // Launcher tools remain available without a card. Flash loading needs SD.
+    {
+        Preferences prefs;
+        if (prefs.begin("os", true)) {
+            soundEnabled = prefs.getBool("sound_en", true);
+            showFpsEnabled = prefs.getBool("show_fps", false);
+            prefs.end();
+        }
+        osSetVolume(soundEnabled ? constrain((int)osSoundVolume, 0, 2) : 0);
+        soundEnabled = osSoundVolume > 0;
     }
-
     // ─── BÖLÜM 5: Bootloader modu — flash yazma ───
     // Bootloader modunda mıyız? (RTC magic kontrolü)
     if (enterBootloader && sdReady) {
@@ -1906,54 +1959,20 @@ void setup() {
 
     // ─── BÖLÜM 6: TFT başlatma + joystick switch pini ───
     tft.init(); tft.setRotation(1); tft.setSwapBytes(true); tft.fillScreen(TFT_BLACK);
-    fb.createSprite(160, 128); // --- V3.0 --- Sanal tuval tahsisi
+    framebufferReady = fb.createSprite(160, 128) != nullptr;
+    if (!framebufferReady) {
+        tft.setTextColor(TFT_RED); tft.setTextSize(1);
+        tft.setCursor(8, 55); tft.print("FRAMEBUFFER ERROR");
+        return;
+    }
+    startFrameDumper();
     pinMode(JOY_SW, INPUT_PULLUP); // Joystick switch butonu (basılı 0)
 
     // Renk paletini ve oyun listesini başlat (TFT hazır olmalı!)
     // RGB_FIX() artık güvenle çağrılabilir
     initColorsAndGames();
 
-    // ─── BÖLÜM 7: NVS'ten ses ayarını oku (V2.1) ───
-    // Blok kapsamı — prefs nesnesi bu blok bitince yok olur
-    {
-        Preferences prefs;
-        prefs.begin("os", true); // true = salt-oku modu
-        // Varsayılan: true (ses açık) — ilk açılışta NVS boşsa
-        soundEnabled = prefs.getBool("sound_en", true);
-        showFpsEnabled = prefs.getBool("show_fps", false);
-        prefs.end();
-    }
-
-    // ─── BÖLÜM 8: Joystick merkez kalibrasyonu ───
-
-    // --- Joystick Güvenliği: Eğer kalibrasyon anında itiliyorsa serbest bırakılmasını bekle ---
-    bool warningShown = false;
-    while (analogRead(JOY_X) < 1400 || analogRead(JOY_X) > 2600 ||
-           analogRead(JOY_Y) < 1400 || analogRead(JOY_Y) > 2600) {
-        if (!warningShown) {
-            fb.fillScreen(COL_BLACK);
-            fb.setTextColor(COL_DANGER);
-            fb.setTextSize(1);
-            fb.setCursor(23, 60);
-            fb.print("RELEASE JOYSTICK!");
-            fb.pushSprite(0, 0);
-            warningShown = true;
-        }
-        delay(50);
-    }
-
-    if (warningShown) {
-        fb.fillScreen(COL_BLACK);
-        delay(300); // Yayin titremesi bitsin (debounce)
-    }
-
-    fb.setTextColor(COL_ACCENT); fb.setTextSize(1);
-    fb.setCursor(38, 58); fb.print("Calibration...");
-    fb.pushSprite(0, 0);
-    long sumX = 0, sumY = 0;
-    // 10 örnek alıp ortalama → "sıfır" konumu belirle
-    for (int i = 0; i < 10; i++) { sumX += analogRead(JOY_X); sumY += analogRead(JOY_Y); delay(2); }
-    joyCenterX = sumX / 10; joyCenterY = sumY / 10; // Ortalama = merkez
+    calibrateLauncherJoystick();
 
     // ═══ BÖLÜM 9: PREMİUM BOOT ANİMASYONU ═══
     drawBootAnimation();
@@ -1965,6 +1984,7 @@ void setup() {
 
     // İlk carousel çizimi — fullRedraw=true (frame dahil)
     renderFrameToSprite();
+    menuInput.reset(millis());
     updateOLED(carouselSel); // OLED'i uyku moduna al (güç tasarrufu)
 }
 
@@ -1982,8 +2002,34 @@ void setup() {
 // Parametre: yok
 // Return: yok (Arduino loop imzası)
 
+void launchGame(uint8_t index) {
+    const char* filename = games[index].filename;
+    bool fastBoot = cachedGameMatches(filename);
+    if (!fastBoot && !sdReady) {
+        fb.fillScreen(COL_BLACK); fb.setTextColor(COL_DANGER);
+        fb.setTextSize(1); fb.setCursor(8, 55); fb.print("NO SD CARD!");
+        fb.pushSprite(0, 0); yieldWait(1200);
+        return;
+    }
+    drawLaunchAnimation(index, fastBoot);
+    if (fastBoot) {
+        const esp_partition_t* part = gamePartition();
+        if (part && esp_ota_set_boot_partition(part) == ESP_OK) {
+            ESP.restart();
+            return;
+        }
+        // Activation failed: reload from SD instead of blindly restarting.
+        if (!clearGameCache() || !sdReady) return;
+    }
+    bootModeMagic = 0xDEADBEEF;
+    strncpy(bootFilename, filename, sizeof(bootFilename) - 1);
+    bootFilename[sizeof(bootFilename) - 1] = '\0';
+    ESP.restart();
+}
+
 void loop() {
-    uint32_t current_ms = getDevMillis();
+    if (!framebufferReady) { delay(50); return; }
+    uint32_t current_ms = millis();
     static uint32_t lastMoveX = 0;
     static uint32_t lastMoveY = 0;
     static uint32_t lastFrameMs = 0;
@@ -1991,6 +2037,8 @@ void loop() {
     // Kare hızı sınırı (~125 FPS cap) — delay(8) yerine millis tabanlı
     if (current_ms - lastFrameMs < 8) { yield(); return; }
     lastFrameMs = current_ms;
+    menuInput.update(current_ms);
+    bool movingAtFrameStart = slideAnimating || rowAnimating;
 
     // Joystick oku
     int jx = analogRead(JOY_X) - joyCenterX;
@@ -1998,7 +2046,7 @@ void loop() {
 
     // --- Y Ekseni: Satir Degistirme (V3.0) ---
     bool yMoved = false;
-    if (abs(jy) > 500 && (current_ms - lastMoveY > 200)) {
+    if (!slideAnimating && !rowAnimating && abs(jy) > 500 && (current_ms - lastMoveY > 200)) {
         if (jy > 0 && activeRow < ROW_COUNT - 1) {
             activeRow++;
             scrollYTarget = activeRow * 128;
@@ -2091,50 +2139,20 @@ void loop() {
     // --- OLED Guc Tasarrufu ---
     updateOLED(carouselSel);
 
-    // --- Buton A: Secim / Oyun Baslat (kenar tespiti + millis debounce) ---
-    static bool prevA = true;
-    static uint32_t lastPressA = 0;
-    bool aNow = digitalRead(BTN_A);
-    if (prevA && !aNow && (current_ms - lastPressA > 200)) {
-        lastPressA = current_ms;
-        if (!digitalRead(BTN_A)) {
-            uint8_t globalIdx = getGlobalIndex(activeRow, rows[activeRow].cursor);
-            if (globalIdx == SETTINGS_INDEX) {
-                openSettingsMenu();
-                // Ayarlardan donunce ekrani yenile
-                renderFrameToSprite();
-            } else if (globalIdx == TOOLS_INDEX) {
-                openToolsMenu();          // --- V3.1 --- launcher-ici (flash yok)
-                renderFrameToSprite();
-            } else if (globalIdx == DRAW_INDEX) {
-                openDrawApp();            // --- V3.2 --- launcher-ici piksel cizim (flash yok)
-                renderFrameToSprite();
-            } else {
-                playSound(NOTE_E5, 50); delay(60); playSound(NOTE_G5, 40);
-                Preferences prefs;
-                prefs.begin("os", true);
-                String lastGame = prefs.getString("last_game", "");
-                prefs.end();
-                
-                bool isFastBoot = (lastGame == String(games[globalIdx].filename));
-                drawLaunchAnimation(globalIdx, isFastBoot);
-                
-                if (isFastBoot) {
-                    const esp_partition_t *os_part = esp_ota_get_next_update_partition(NULL);
-                    if (os_part) { esp_ota_set_boot_partition(os_part); }
-                    ESP.restart();
-                } else {
-                    bootModeMagic = 0xDEADBEEF;
-                    strncpy(bootFilename, games[globalIdx].filename, 31);
-                    bootFilename[31] = '\0';
-                    ESP.restart();
-                }
-            }
-        }
+    // Presses during movement are consumed; a new press selects the settled card.
+    if ((movingAtFrameStart || slideAnimating || rowAnimating || yMoved) && menuInput.a.raw == LOW) {
+        menuInput.a.reset(LOW, current_ms);
     }
-    prevA = aNow;
-
-
+    if (menuInput.a.pressed && !movingAtFrameStart && !slideAnimating && !rowAnimating && !yMoved) {
+        uint8_t globalIdx = getGlobalIndex(activeRow, rows[activeRow].cursor);
+        if (globalIdx == SETTINGS_INDEX) openSettingsMenu();
+        else if (globalIdx == TOOLS_INDEX) openToolsMenu();
+        else if (globalIdx == DRAW_INDEX) openDrawApp();
+        else launchGame(globalIdx);
+        menuInput.reset(millis());
+        lastMoveX = lastMoveY = millis();
+        renderFrameToSprite();
+    }
 
     checkScreenshot(fb);
 }

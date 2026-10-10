@@ -31,6 +31,7 @@ struct ProjectileManager {
             if (!pBullets[i].active) {
                 pBullets[i].x = x;
                 pBullets[i].y = y;
+                pBullets[i].previousY = y;
                 pBullets[i].active = true;
                 return true;
             }
@@ -43,6 +44,7 @@ struct ProjectileManager {
             if (!eBullets[i].active) {
                 eBullets[i].x = x;
                 eBullets[i].y = y;
+                eBullets[i].previousY = y;
                 eBullets[i].color = color;
                 eBullets[i].active = true;
                 return true;
@@ -54,6 +56,7 @@ struct ProjectileManager {
     void updatePlayerBullets(float dt) {
         for (int i = 0; i < MAX_PBULLETS; i++) {
             if (!pBullets[i].active) continue;
+            pBullets[i].previousY = pBullets[i].y;
             pBullets[i].y -= PBULLET_SPD * dt;
             if (pBullets[i].y < (float)HUD_H) pBullets[i].active = false;
         }
@@ -62,6 +65,7 @@ struct ProjectileManager {
     void updateEnemyBullets(float dt) {
         for (int i = 0; i < MAX_EBULLETS; i++) {
             if (!eBullets[i].active) continue;
+            eBullets[i].previousY = eBullets[i].y;
             eBullets[i].y += EBULLET_SPD * dt;
             if (eBullets[i].y > (float)SCR_H) eBullets[i].active = false;
         }

@@ -66,7 +66,8 @@ inline void updateBullets(float dt) {
         if (!eBullets[i].active) continue;
         eBullets[i].x += eBullets[i].vx * dt;
         eBullets[i].y += eBullets[i].vy * dt;
-        if (eBullets[i].y > SCR_H + 5 || eBullets[i].x < -5 || eBullets[i].x > SCR_W + 5)
+        if (eBullets[i].y < -5 || eBullets[i].y > SCR_H + 5 ||
+            eBullets[i].x < -5 || eBullets[i].x > SCR_W + 5)
             eBullets[i].active = false;
     }
 }
@@ -118,12 +119,8 @@ inline void updateCollisions(float dt) {
                     spawnExplosion(ship.x, ship.y);
                     playSound(NOTE_G3, 100);
                     if (ship.hp <= 0) {
-                        state = ST_GAMEOVER;
-                        stateTimer = millis();
-                        if (ship.score > highScore) {
-                            highScore = ship.score;
-                            osSaveHighScore("hs_galacticstrike", highScore);
-                        }
+                        finishGame();
+                        return;
                     }
                 }
                 break;
@@ -142,12 +139,8 @@ inline void updateCollisions(float dt) {
                 spawnExplosion(ship.x, ship.y);
                 playSound(NOTE_G3, 100);
                 if (ship.hp <= 0) {
-                    state = ST_GAMEOVER;
-                    stateTimer = millis();
-                    if (ship.score > highScore) {
-                        highScore = ship.score;
-                        osSaveHighScore("hs_galacticstrike", highScore);
-                    }
+                    finishGame();
+                    return;
                 }
                 break;
             }

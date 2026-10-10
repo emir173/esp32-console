@@ -164,7 +164,7 @@ inline void drawPanel(TFT_eSprite &s, uint8_t nextType,
     s.print("LEVEL");
     s.setTextColor(TFT_WHITE);
     s.setCursor(PANEL_X, 97);
-    snprintf(buf, sizeof(buf), "%d", level + 1);
+    snprintf(buf, sizeof(buf), "%d", level);
     s.print(buf);
 
     // Rekor
@@ -253,7 +253,7 @@ inline void drawGameOverPanel(TFT_eSprite &s, int score, int lines,
 //  Pause paneli (oyun sahnesinin uzerine cizilir)
 // ------------------------------------------------------------
 inline void drawPauseOverlay(TFT_eSprite &s) {
-    // Manuel EN pause kutusu. Kontrol semasi: [A] devam, [B] OS menu.
+    // Manuel EN pause kutusu: [A] devam, [B] oyun menusu, [C] OS menu.
     s.fillRoundRect(25, 36, 110, 60, 5, COLOR_PANEL_BG);
     s.drawRoundRect(25, 36, 110, 60, 5, COLOR_FRAME);
     s.setTextSize(1);

@@ -234,7 +234,7 @@ inline void drawTitle() {
     char rekorBuf[20];
     snprintf(rekorBuf, sizeof(rekorBuf), "Best: %d", highScore);
     int txtW = strlen(rekorBuf) * 6;
-    canvas.setCursor((160 - txtW) / 2, 140);
+    canvas.setCursor((SCR_W - txtW) / 2, 80);
     canvas.print(rekorBuf);
 
     checkScreenshot(canvas);
@@ -257,7 +257,6 @@ inline void drawGameOver() {
         { "Wave",  wb, TFT_WHITE, TFT_CYAN   },
         { "Best",  hb, TFT_WHITE, TFT_GREEN  },
     };
-    bool newRecord = (ship.score >= highScore && ship.score > 0);
     osDrawGameOver(canvas, false, rows, 3, newRecord ? "NEW BEST!" : nullptr);
 
     checkScreenshot(canvas);

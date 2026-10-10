@@ -6,6 +6,7 @@
 // ============================================================
 
 #include <Wire.h>
+#include <math.h>
 
 // ============ Ekran Boyutlari (Landscape 160x128) ============
 constexpr int SW      = 160;
@@ -17,6 +18,11 @@ constexpr int HORIZON = 38;
 // ============ RGB565 Renk Makrosu (constexpr fonksiyon) ============
 constexpr uint16_t RGB(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint16_t)(((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3));
+}
+
+// TFT_eSprite stores 16-bit pixels in swapped byte order, including drawPixel.
+constexpr uint16_t spriteColor(uint16_t color) {
+    return (uint16_t)((color >> 8) | (color << 8));
 }
 
 // ============ Renk Paleti ============

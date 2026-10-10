@@ -280,37 +280,31 @@ inline void drawFood(TFT_eSprite& canvas, const FoodManager& food) {
     int cx = (int)food.foodPixelX;
     int cy = (int)food.foodPixelY;
 
-    // Ghost power-up (mavi halka + daire)
-    if (food.foodType == FOOD_GHOST) {
-        uint16_t col = bright ? COL_GHOST : COL_GHOST_DIM;
-        canvas.fillCircle(cx, cy, 3, col);
-        canvas.drawCircle(cx, cy, 4, COL_GHOST_HL);
-        return;
+    if (food.foodActive) {
+        if (food.foodType == FOOD_GHOST) {
+            uint16_t col = bright ? COL_GHOST : COL_GHOST_DIM;
+            canvas.fillCircle(cx, cy, 3, col);
+            canvas.drawCircle(cx, cy, 4, COL_GHOST_HL);
+        } else if (food.foodType == FOOD_MAGNET) {
+            uint16_t col = bright ? COL_MAGNET : COL_MAGNET_DIM;
+            canvas.fillRect(cx - 2, cy - 2, 5, 5, col);
+            canvas.drawRect(cx - 3, cy - 3, 7, 7, COL_MAGNET_HL);
+        } else {
+            uint16_t mainCol, hlCol;
+            if (food.foodType == FOOD_GOLD) {
+                mainCol = bright ? COL_GOLD : COL_GOLD_DIM;
+                hlCol   = COL_GOLD_HL;
+            } else {
+                mainCol = bright ? COL_FOOD : COL_FOOD_DIM;
+                hlCol   = COL_FOOD_HL;
+            }
+            canvas.fillCircle(cx, cy, 3, mainCol);
+            canvas.drawPixel(cx - 1, cy - 1, hlCol);
+            canvas.drawFastVLine(cx, cy - 4, 2, COL_FOOD_STEM);
+            canvas.drawPixel(cx + 1, cy - 4, COL_FOOD_LEAF);
+            canvas.drawPixel(cx + 2, cy - 3, COL_FOOD_LEAF);
+        }
     }
-
-    // Magnet power-up (mor kare + dis cerceve)
-    if (food.foodType == FOOD_MAGNET) {
-        uint16_t col = bright ? COL_MAGNET : COL_MAGNET_DIM;
-        canvas.fillRect(cx - 2, cy - 2, 5, 5, col);
-        canvas.drawRect(cx - 3, cy - 3, 7, 7, COL_MAGNET_HL);
-        return;
-    }
-
-    // Normal / Gold food
-    uint16_t mainCol, hlCol;
-    if (food.foodType == FOOD_GOLD) {
-        mainCol = bright ? COL_GOLD : COL_GOLD_DIM;
-        hlCol   = COL_GOLD_HL;
-    } else {
-        mainCol = bright ? COL_FOOD : COL_FOOD_DIM;
-        hlCol   = COL_FOOD_HL;
-    }
-
-    canvas.fillCircle(cx, cy, 3, mainCol);
-    canvas.drawPixel(cx - 1, cy - 1, hlCol);
-    canvas.drawFastVLine(cx, cy - 4, 2, COL_FOOD_STEM);
-    canvas.drawPixel(cx + 1, cy - 4, COL_FOOD_LEAF);
-    canvas.drawPixel(cx + 2, cy - 3, COL_FOOD_LEAF);
 
     // Poison mushroom
     if (food.isPoisonVisible()) {
@@ -507,7 +501,8 @@ inline void drawMenu(TFT_eSprite& canvas, int highScore) {
 // ============================================================
 //  Draw game over screen
 // ============================================================
-inline void drawGameOver(TFT_eSprite& canvas, int score, int highScore, bool newRecord) {
+inline void drawGameOver(TFT_eSprite& canvas, int score, int highScore, bool newRecord,
+                         int foodsEaten, bool arenaCleared) {
     canvas.fillSprite(COL_BG_A);
 
     // Checkerboard background
@@ -520,14 +515,14 @@ inline void drawGameOver(TFT_eSprite& canvas, int score, int highScore, bool new
     // Checkerboard arka plan uzerine cizilir.
     char sb[12], fb[12], hb[12];
     snprintf(sb, sizeof(sb), "%d", score);
-    snprintf(fb, sizeof(fb), "%d", score / 10);
+    snprintf(fb, sizeof(fb), "%d", foodsEaten);
     snprintf(hb, sizeof(hb), "%d", highScore);
     OsStat rows[3] = {
         { "Score", sb, TFT_WHITE, TFT_YELLOW },
         { "Food",  fb, TFT_WHITE, COL_FOOD   },
         { "Best",  hb, TFT_WHITE, TFT_GREEN  },
     };
-    osDrawGameOver(canvas, false, rows, 3, newRecord ? "NEW BEST!" : nullptr);
+    osDrawGameOver(canvas, arenaCleared, rows, 3, newRecord ? "NEW BEST!" : nullptr);
 }
 
 // ============================================================

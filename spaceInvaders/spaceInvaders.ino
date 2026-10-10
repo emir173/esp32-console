@@ -24,6 +24,7 @@
 #include "Projectiles.h"
 #include "Renderer.h"
 #include "../SharedJoystick.h"
+#include "Input.h"
 
 // ============ Goruntu Nesneleri ============
 TFT_eSPI tft = TFT_eSPI();
@@ -51,6 +52,7 @@ bool newRecord = false;
 unsigned long lastFrameMs;
 unsigned long gameOverMs;
 unsigned long waveClearMs;
+unsigned long pauseMs;
 
 // ============ FPS Sayaci ============
 unsigned long fpsFrameCount = 0;
@@ -59,8 +61,12 @@ int currentFPS = 0;
 bool showFps = false;
 
 // ============ Buton ============
-int prevBtnA = HIGH;
-int prevBtnB = HIGH;
+InvadersButton buttonA, buttonB, buttonC, buttonJoy;
+
+// Transition tones run between frames without blocking input/rendering.
+int soundSequence = 0; // 0 = none, 1 = wave clear, 2 = game over
+int soundStage = 0;
+unsigned long soundSequenceMs = 0;
 
 // ============ Ses ============
 bool soundEnabled = true;
@@ -68,8 +74,37 @@ void playSound(uint16_t freq, uint32_t dur) {
     osPlaySound(freq, dur, soundEnabled);
 }
 
+void updateTransitionSound(unsigned long now) {
+    unsigned long elapsed = now - soundSequenceMs;
+    if (soundSequence == 1) {
+        if (soundStage == 0 && elapsed >= 60) {
+            playSound(NOTE_E5, 50);
+            soundStage = 1;
+            soundSequenceMs = now;
+        } else if (soundStage == 1 && elapsed >= 60) {
+            playSound(NOTE_G5, 40);
+            soundSequence = 0;
+        }
+    } else if (soundSequence == 2 && elapsed >= 100) {
+        playSound(NOTE_E3, 100);
+        soundSequence = 0;
+    }
+}
+
+void saveHighScoreIfNeeded() {
+    if (score > highScore) highScore = score;
+    Preferences prefs;
+    if (!prefs.begin("os", false)) return;
+    int saved = prefs.getInt(HIGH_SCORE_KEY, 0);
+    if (highScore > saved && prefs.putInt(HIGH_SCORE_KEY, highScore) != sizeof(int32_t)) {
+        Serial.println("Space Invaders: high score write failed");
+    }
+    prefs.end();
+}
+
 // ============ OS'a Donus ============
 void returnToOS() {
+    saveHighScoreIfNeeded();
     osReturnToOS(tft, soundEnabled);
 }
 
@@ -90,6 +125,139 @@ void resetGame() {
     flash.reset();
     joystick.reset();
     state = PLAYING;
+    soundSequence = 0;
+    lastFrameMs = millis();
+}
+
+void enterGameMenu() {
+    saveHighScoreIfNeeded();
+    soundSequence = 0;
+    shake.reset();
+    flash.reset();
+    state = MENU;
+}
+
+void enterPause() {
+    pauseMs = millis();
+    state = PAUSE;
+    playSound(NOTE_G4, 50);
+}
+
+void resumeGame() {
+    unsigned long pausedFor = millis() - pauseMs;
+    player.hitTime += pausedFor;
+    player.lastFireMs += pausedFor;
+    invaders.lastEFireMs += pausedFor;
+    invaders.lastAnimMs += pausedFor;
+    state = PLAYING;
+    lastFrameMs = millis();
+    playSound(NOTE_D5, 40);
+}
+
+void finishGame() {
+    newRecord = score > highScore;
+    saveHighScoreIfNeeded();
+    state = GAMEOVER;
+    gameOverMs = millis();
+    soundSequenceMs = gameOverMs;
+    soundSequence = 2;
+    shake.trigger(5);
+}
+
+// Sample the whole travelled segment at <= 1px spacing. A slow frame cannot
+// skip a 3px bunker block; the first encountered object consumes the bullet.
+void checkPlayerBulletCollisions() {
+    for (int i = 0; i < MAX_PBULLETS; i++) {
+        if (!projectiles.pBullets[i].active) continue;
+        float bx = projectiles.pBullets[i].x;
+        float fromY = projectiles.pBullets[i].previousY;
+        float travel = projectiles.pBullets[i].y - fromY;
+        int steps = (int)ceilf(fabsf(travel));
+        if (steps < 1) steps = 1;
+        for (int s = 0; s <= steps && projectiles.pBullets[i].active; s++) {
+            float by = fromY + travel * (float)s / (float)steps;
+            if (bunkers.checkBulletHit(bx, by)) {
+                projectiles.deactivatePB(i);
+                break;
+            }
+            bool hit = false;
+            for (int r = ALIEN_ROWS - 1; r >= 0 && !hit; r--) {
+                for (int c = 0; c < ALIEN_COLS && !hit; c++) {
+                    if (!invaders.aliens[r][c]) continue;
+                    float ax = invaders.alienX(c);
+                    float ay = invaders.alienY(r);
+                    if (bx + 1.0f > ax && bx - 1.0f < ax + (float)ALIEN_W &&
+                        by + 2.0f > ay && by - 2.0f < ay + (float)ALIEN_H) {
+                        invaders.killAt(r, c, wave);
+                        projectiles.deactivatePB(i);
+                        score += ALIEN_POINTS[r & 3];
+                        playSound(NOTE_D5, 30);
+                        particles.spawn(ax + (float)ALIEN_W / 2.0f,
+                                        ay + (float)ALIEN_H / 2.0f, COL_ALIEN_ROW[r & 3], 12);
+                        shake.trigger(2);
+                        hit = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void checkEnemyBulletCollisions() {
+    for (int i = 0; i < MAX_EBULLETS; i++) {
+        if (!projectiles.eBullets[i].active) continue;
+        float bx = projectiles.eBullets[i].x;
+        float fromY = projectiles.eBullets[i].previousY;
+        float travel = projectiles.eBullets[i].y - fromY;
+        int steps = (int)ceilf(fabsf(travel));
+        if (steps < 1) steps = 1;
+        for (int s = 0; s <= steps && projectiles.eBullets[i].active; s++) {
+            float by = fromY + travel * (float)s / (float)steps;
+            if (bunkers.checkBulletHit(bx, by)) {
+                projectiles.deactivateEB(i);
+                break;
+            }
+            if (!player.isInvincible() && bx + 1.0f > player.hitboxLeft() &&
+                bx - 1.0f < player.hitboxRight() && by + 2.0f > player.hitboxTop() &&
+                by - 2.0f < player.hitboxBottom()) {
+                projectiles.deactivateEB(i);
+                player.takeDamage();
+                playSound(NOTE_B3, 80);
+                shake.trigger(4);
+                flash.trigger();
+                if (player.lives <= 0) { finishGame(); return; }
+            }
+        }
+    }
+}
+
+void fireEnemyBullet() {
+    int columns[ALIEN_COLS];
+    int columnCount = 0;
+    for (int c = 0; c < ALIEN_COLS; c++) {
+        for (int r = ALIEN_ROWS - 1; r >= 0; r--) {
+            if (invaders.aliens[r][c]) { columns[columnCount++] = c; break; }
+        }
+    }
+    if (columnCount == 0) return;
+    int c = columns[random(0, columnCount)];
+    for (int r = ALIEN_ROWS - 1; r >= 0; r--) {
+        if (invaders.aliens[r][c]) {
+            if (projectiles.addEnemyBullet(invaders.alienCenterX(c),
+                    invaders.alienBottomY(r) + 1.0f, COL_ALIEN_ROW[r & 3])) invaders.markFired();
+            break;
+        }
+    }
+}
+
+void presentFrame(int x = 0, int y = 0) {
+    // A shifted sprite leaves TFT strips uncovered. Clear those stale pixels.
+    if (x > 0) tft.fillRect(0, 0, x, SCR_H, COL_SPACE);
+    else if (x < 0) tft.fillRect(SCR_W + x, 0, -x, SCR_H, COL_SPACE);
+    if (y > 0) tft.fillRect(0, 0, SCR_W, y, COL_SPACE);
+    else if (y < 0) tft.fillRect(0, SCR_H + y, SCR_W, -y, COL_SPACE);
+    checkScreenshot(canvas);
+    canvas.pushSprite(x, y);
 }
 
 // ============================================================
@@ -127,7 +295,7 @@ void setup() {
     }
     {
         Preferences prefs; prefs.begin("os", true);
-        highScore = prefs.getInt("hs_spaceinvaders", 0);
+        highScore = prefs.getInt(HIGH_SCORE_KEY, 0);
         prefs.end();
     }
 
@@ -153,7 +321,15 @@ void setup() {
     tft.fillScreen(TFT_BLACK);
 
     canvas.setColorDepth(16);
-    canvas.createSprite(SCR_W, SCR_H);
+    if (!canvas.createSprite(SCR_W, SCR_H)) {
+        tft.setTextColor(TFT_RED); tft.setTextSize(1);
+        tft.setCursor(5, 48); tft.print("Display buffer error");
+        tft.setCursor(20, 70); tft.print("[B] OS Menu");
+        while (true) {
+            if (digitalRead(BTN_B) == LOW) returnToOS();
+            delay(20);
+        }
+    }
 
     bool warningShown = false;
     while (analogRead(JOY_X) < 1400 || analogRead(JOY_X) > 2600 ||
@@ -183,6 +359,11 @@ void setup() {
     starfield.init();
     particles.clear();
     state = MENU;
+    unsigned long inputNow = millis();
+    buttonA.reset(digitalRead(BTN_A), inputNow);
+    buttonB.reset(digitalRead(BTN_B), inputNow);
+    buttonC.reset(digitalRead(BTN_C), inputNow);
+    buttonJoy.reset(digitalRead(JOY_SW), inputNow);
     lastFrameMs = millis();
     fpsStartTime = millis();
 }
@@ -191,17 +372,12 @@ void setup() {
 //  LOOP
 // ============================================================
 void loop() {
-    static bool prevJoySw = true;
-    bool currJoySw = digitalRead(JOY_SW);
-    if (prevJoySw && !currJoySw) {
-        if (state == PLAYING) {
-            state = PAUSE;
-            playSound(NOTE_G4, 50);
-        }
-    }
-    prevJoySw = currJoySw;
-
     unsigned long now = millis();
+    buttonA.update(digitalRead(BTN_A), now);
+    buttonB.update(digitalRead(BTN_B), now);
+    buttonC.update(digitalRead(BTN_C), now);
+    buttonJoy.update(digitalRead(JOY_SW), now);
+    updateTransitionSound(now);
     unsigned long elapsed = now - lastFrameMs;
     if (elapsed < (unsigned long)FRAME_MS) return;
     float dt = (float)elapsed / 1000.0f;
@@ -210,44 +386,44 @@ void loop() {
 
     fpsFrameCount++;
     if (now - fpsStartTime >= 1000) {
-        currentFPS = (int)fpsFrameCount;
+        currentFPS = (int)(fpsFrameCount * 1000UL / (now - fpsStartTime));
         fpsFrameCount = 0;
         fpsStartTime = now;
     }
 
     joystick.update();
 
-    int btnA = digitalRead(BTN_A);
-    int btnB = digitalRead(BTN_B);
-    bool pressA = (btnA == LOW && prevBtnA == HIGH);
-    bool pressB = (btnB == LOW && prevBtnB == HIGH);
-    prevBtnA = btnA;
-    prevBtnB = btnB;
+    bool pressA = buttonA.takePress();
+    bool pressB = buttonB.takePress();
+    bool pressC = buttonC.takePress();
+    bool pressJoy = buttonJoy.takePress();
 
-    starfield.update(dt);
-    shake.update();
-    flash.update();
+    if (state != PAUSE) {
+        starfield.update(dt);
+        shake.update();
+        flash.update(elapsed);
+    }
 
     switch (state) {
 
         case MENU:
             drawMenu(canvas, starfield, highScore);
-            checkScreenshot(canvas);
-            canvas.pushSprite(0, 0);
+            presentFrame();
             if (pressA) {
                 playSound(NOTE_E5, 50);
                 resetGame();
             }
-            if (!digitalRead(BTN_B)) {
+            else if (pressB) {
                 returnToOS();
             }
             break;
 
         case PLAYING: {
+            if (pressJoy) { enterPause(); break; }
             float rawJoyX = (float)analogRead(JOY_X);
             player.move(rawJoyX, joystick.centerX, dt);
 
-            bool fireHeld = (btnA == LOW);
+            bool fireHeld = (buttonA.stable == LOW);
             if (fireHeld && player.canFire()) {
                 if (projectiles.activePB() < MAX_PBULLETS) {
                     if (projectiles.addPlayerBullet(player.gunTipX(), player.gunTipY())) {
@@ -259,43 +435,15 @@ void loop() {
 
             projectiles.updatePlayerBullets(dt);
 
-            for (int i = 0; i < MAX_PBULLETS; i++) {
-                if (!projectiles.pBullets[i].active) continue;
-                float bx = projectiles.pBullets[i].x;
-                float by = projectiles.pBullets[i].y;
-
-                bool hit = false;
-                for (int r = 0; r < ALIEN_ROWS && !hit; r++) {
-                    for (int c = 0; c < ALIEN_COLS && !hit; c++) {
-                        if (!invaders.aliens[r][c]) continue;
-                        float ax = invaders.alienX(c);
-                        float ay = invaders.alienY(r);
-                        if (bx >= ax - 1.0f && bx <= ax + (float)ALIEN_W + 1.0f &&
-                            by >= ay && by <= ay + (float)ALIEN_H) {
-                            invaders.killAt(r, c, wave);
-                            projectiles.deactivatePB(i);
-                            score += ALIEN_POINTS[r & 3];
-                            playSound(NOTE_D5, 30);
-                            float px = ax + (float)ALIEN_W / 2.0f;
-                            float py = ay + (float)ALIEN_H / 2.0f;
-                            particles.spawn(px, py, COL_ALIEN_ROW[r & 3], 12);
-                            shake.trigger(2);
-                            hit = true;
-                        }
-                    }
-                }
-
-                if (!hit && bunkers.checkBulletHit(bx, by)) {
-                    projectiles.deactivatePB(i);
-                }
-            }
+            checkPlayerBulletCollisions();
 
             if (invaders.count <= 0) {
                 state = WAVE_CLEAR;
                 waveClearMs = now;
-                playSound(NOTE_C5, 50); delay(60);
-                playSound(NOTE_E5, 50); delay(60);
-                playSound(NOTE_G5, 40);
+                soundSequence = 1;
+                soundStage = 0;
+                soundSequenceMs = now;
+                playSound(NOTE_C5, 50);
                 break;
             }
 
@@ -323,81 +471,19 @@ void loop() {
             }
 
             if (invaders.reachedPlayer()) {
-                state = GAMEOVER;
-                newRecord = (score > highScore);
-                if (newRecord) highScore = score;
-                gameOverMs = now;
-                {
-                    Preferences prefs; prefs.begin("os", false);
-                    int32_t hs = prefs.getInt("hs_spaceinvaders", 0);
-                    if (score > hs) prefs.putInt("hs_spaceinvaders", score);
-                    prefs.end();
-                }
-                playSound(NOTE_G3, 100); delay(100);
-                playSound(NOTE_E3, 100);
-                shake.trigger(5);
+                playSound(NOTE_G3, 100);
+                finishGame();
                 break;
             }
 
             if (invaders.canFire(wave) && invaders.count > 0 &&
                 projectiles.activeEB() < MAX_EBULLETS) {
-                invaders.markFired();
-                for (int tries = 0; tries < 20; tries++) {
-                    int c = random(0, ALIEN_COLS);
-                    for (int r = ALIEN_ROWS - 1; r >= 0; r--) {
-                        if (invaders.aliens[r][c]) {
-                            float ex = invaders.alienCenterX(c);
-                            float ey = invaders.alienBottomY(r);
-                            projectiles.addEnemyBullet(ex, ey + 1.0f, COL_ALIEN_ROW[r & 3]);
-                            tries = 99;
-                            break;
-                        }
-                    }
-                }
+                fireEnemyBullet();
             }
 
             projectiles.updateEnemyBullets(dt);
 
-            for (int i = 0; i < MAX_EBULLETS; i++) {
-                if (!projectiles.eBullets[i].active) continue;
-                float bx = projectiles.eBullets[i].x;
-                float by = projectiles.eBullets[i].y;
-
-                if (bunkers.checkBulletHit(bx, by)) {
-                    projectiles.deactivateEB(i);
-                    continue;
-                }
-
-                if (!player.isInvincible()) {
-                    if (bx >= player.hitboxLeft() - 1.0f &&
-                        bx <= player.hitboxRight() + 1.0f &&
-                        by >= player.hitboxTop() &&
-                        by <= player.hitboxBottom()) {
-                        projectiles.deactivateEB(i);
-                        player.takeDamage();
-                        playSound(NOTE_B3, 80);
-                        shake.trigger(4);
-                        flash.trigger();
-
-                        if (player.lives <= 0) {
-                            state = GAMEOVER;
-                            newRecord = (score > highScore);
-                            if (newRecord) highScore = score;
-                            gameOverMs = now;
-                            {
-                                Preferences prefs; prefs.begin("os", false);
-                                int32_t hs = prefs.getInt("hs_spaceinvaders", 0);
-                                if (score > hs) prefs.putInt("hs_spaceinvaders", score);
-                                prefs.end();
-                            }
-                            delay(100);
-                            playSound(NOTE_E3, 100);
-                            shake.trigger(5);
-                            break;
-                        }
-                    }
-                }
-            }
+            checkEnemyBulletCollisions();
 
             if (state != PLAYING) break;
 
@@ -407,15 +493,13 @@ void loop() {
                             projectiles, particles, flash, score, wave,
                             player.lives, currentFPS, showFps);
 
-            checkScreenshot(canvas);
-            canvas.pushSprite((int)shake.shakeX, (int)shake.shakeY);
+            presentFrame((int)shake.shakeX, (int)shake.shakeY);
             break;
         }
 
         case WAVE_CLEAR:
             drawWaveClear(canvas, starfield, wave, score);
-            checkScreenshot(canvas);
-            canvas.pushSprite(0, 0);
+            presentFrame();
             if (now - waveClearMs > 2000) {
                 startNewWave();
                 state = PLAYING;
@@ -424,19 +508,16 @@ void loop() {
 
         case GAMEOVER:
             drawGameOver(canvas, starfield, score, highScore, newRecord);
-            checkScreenshot(canvas);
-            canvas.pushSprite(0, 0);
+            presentFrame();
             if (pressA && now - gameOverMs > 600) {
                 playSound(NOTE_D5, 50);
                 resetGame();
             }
-            if (pressB && now - gameOverMs > 600) {
+            else if (pressB && now - gameOverMs > 600) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C) && now - gameOverMs > 600) {
+            else if (pressC && now - gameOverMs > 600) {
                 returnToOS();
             }
             break;
@@ -446,21 +527,15 @@ void loop() {
                             projectiles, particles, flash, score, wave,
                             player.lives, currentFPS, showFps);
             drawPauseOverlay(canvas);
-            checkScreenshot(canvas);
-            canvas.pushSprite(0, 0);
-            if (pressA) {
-                playSound(NOTE_D5, 40);
-                state = PLAYING;
-                lastFrameMs = millis();
+            presentFrame();
+            if (pressA || pressJoy) {
+                resumeGame();
             }
-            if (pressB) {
+            else if (pressB) {
                 playSound(NOTE_G4, 50);
-                resetGame();
-                state = MENU;
-                delay(200);
+                enterGameMenu();
             }
-            if (!digitalRead(BTN_C)) {
-                playSound(NOTE_G4, 50);
+            else if (pressC) {
                 returnToOS();
             }
             break;

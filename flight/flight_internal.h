@@ -14,6 +14,7 @@
 #include <TFT_eSPI.h>
 #include <U8g2lib.h>
 #include <Preferences.h>
+#include <atomic>
 #include "flight_config.h"
 #include "hardware_config.h"
 #include "../GameBase.h"
@@ -22,7 +23,7 @@
 // ─── RGB_FIX (BGR correction for the TFT) ───
 extern TFT_eSPI tft;
 extern TFT_eSprite spr;
-extern uint16_t* g_psramMap;          // regional (2048x1024, High Res)
+extern uint16_t* g_psramMap;          // regional (2560x1280, High Res)
 extern uint16_t* g_psramMapWorld;     // world (512x256, Low Res)
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C oled;
 
@@ -77,9 +78,9 @@ extern bool      g_soundEnabled;   // Is sound enabled (from NVS)
 extern int       g_selectedIdx;    // Selected aircraft index (-1 = none)
 extern int       g_joyCenterX;     // Joystick calibration X
 extern int       g_joyCenterY;     // Joystick calibration Y
-extern bool      g_dataValid;      // Has data been received from OpenSky?
+extern std::atomic<bool> g_dataValid; // Published across the two cores
 extern uint32_t  g_lastUpdate_ms;  // Last successful poll time
-extern bool      g_polling;        // Is currently polling? (UPDATING indicator)
+extern std::atomic<bool> g_polling; // Is currently polling? (UPDATING indicator)
 
 // ─── Color Palette (Assigned in flight_map.cpp setupColors()) ───
 extern uint16_t COL_BG;

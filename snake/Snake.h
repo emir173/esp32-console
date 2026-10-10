@@ -53,7 +53,7 @@ struct Snake {
     void clearQueue() { qCount = 0; }
 
     void queueDirection(int newDir) {
-        if (newDir == -1) return;
+        if (newDir < DIR_UP || newDir > DIR_LEFT) return;
         int lastDir = (qCount > 0) ? dirQueue[qCount - 1] : dir;
 
         if (newDir == DIR_UP && lastDir == DIR_DOWN) return;
@@ -117,7 +117,10 @@ struct Snake {
 
         // Self-collision check (ghost aktifken atla)
         if (!ghostActive) {
-            int checkLen = (ate || atePoison) ? len : len - 1;
+            // Buyume disinda kuyruk bosalir; zehir iki hucreyi bosaltabilir.
+            int checkLen = len - 1;
+            if (ate && len < MAX_SNAKE) checkLen = len;
+            else if (!ate && atePoison && len > INIT_LEN) checkLen = len - 2;
             for (int i = 0; i < checkLen; i++) {
                 if (x[i] == newX && y[i] == newY) return false;
             }

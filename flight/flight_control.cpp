@@ -34,6 +34,8 @@ void ctrlLoadView() {
     prefs.end();
 
     // Boundary checks
+    if (!isfinite(g_view.center_lat)) g_view.center_lat = DEFAULT_CENTER_LAT;
+    if (!isfinite(g_view.center_lon)) g_view.center_lon = DEFAULT_CENTER_LON;
     if (g_view.zoom < 1) g_view.zoom = 1;
     if (g_view.zoom > 10) g_view.zoom = 10;
     if (g_view.center_lat < -85) g_view.center_lat = -85;
@@ -96,7 +98,7 @@ void ctrlHandleJoystick() {
 
     if (moved) {
         s_lastPanMove = now;
-        if (g_soundEnabled) tone(BUZZER, 392, 20);
+        osPlaySound(392, 20, g_soundEnabled);
     }
 
     // Joystick SW (press) — reset viewport
@@ -105,8 +107,10 @@ void ctrlHandleJoystick() {
         g_view.center_lat = DEFAULT_CENTER_LAT;
         g_view.center_lon = DEFAULT_CENTER_LON;
         g_view.zoom = DEFAULT_ZOOM;
+        xSemaphoreTake(g_aircraftMutex, portMAX_DELAY);
         g_selectedIdx = -1;
-        if (g_soundEnabled) tone(BUZZER, 587, 40);
+        xSemaphoreGive(g_aircraftMutex);
+        osPlaySound(587, 40, g_soundEnabled);
         ctrlSaveView();
     }
     if (digitalRead(JOY_SW) == HIGH) s_swPressed = false;
@@ -115,60 +119,54 @@ void ctrlHandleJoystick() {
 // ══════════════════════════════════════════════════════════════
 //  ctrlHandleButtons — Button Inputs
 // ══════════════════════════════════════════════════════════════
+struct FlightButton {
+    bool raw = HIGH;
+    bool stable = HIGH;
+    uint32_t changedMs = 0;
+    bool pressed(int pin, uint32_t now) {
+        bool value = digitalRead(pin);
+        if (value != raw) { raw = value; changedMs = now; }
+        if (value != stable && now - changedMs >= 50) {
+            stable = value;
+            return stable == LOW;
+        }
+        return false;
+    }
+};
+
 void ctrlHandleButtons() {
-    // BTN_A: Zoom in
-    if (!digitalRead(BTN_A)) {
-        delay(50);
-        if (!digitalRead(BTN_A)) {
-            if (g_view.zoom < 10) {
-                g_view.zoom++;
-                if (g_soundEnabled) tone(BUZZER, 659, 30);
-            }
-            ctrlSaveView();
-            while (!digitalRead(BTN_A)) delay(30);
+    static FlightButton a, b, c, d;
+    uint32_t now = millis();
+    // Debounced press edges: holding a button must not block rendering/network.
+    if (a.pressed(BTN_A, now) && g_view.zoom < 10) {
+        g_view.zoom++;
+        osPlaySound(659, 30, g_soundEnabled);
+        ctrlSaveView();
+    }
+    if (b.pressed(BTN_B, now) && g_view.zoom > 1) {
+        g_view.zoom--;
+        osPlaySound(392, 30, g_soundEnabled);
+        ctrlSaveView();
+    }
+    if (c.pressed(BTN_C, now)) {
+        xSemaphoreTake(g_aircraftMutex, portMAX_DELAY);
+        bool wasSelected = g_selectedIdx >= 0;
+        if (wasSelected) g_selectedIdx = -1;
+        xSemaphoreGive(g_aircraftMutex);
+        if (wasSelected) {
+            osPlaySound(400, 30, g_soundEnabled);
+        } else {
+            ctrlSelectNearest();
+            xSemaphoreTake(g_aircraftMutex, portMAX_DELAY);
+            bool selected = g_selectedIdx >= 0;
+            xSemaphoreGive(g_aircraftMutex);
+            if (selected) osPlaySound(784, 40, g_soundEnabled);
         }
     }
-
-    // BTN_B: Zoom out
-    if (!digitalRead(BTN_B)) {
-        delay(50);
-        if (!digitalRead(BTN_B)) {
-            if (g_view.zoom > 1) {
-                g_view.zoom--;
-                if (g_soundEnabled) tone(BUZZER, 392, 30);
-            }
-            ctrlSaveView();
-            while (!digitalRead(BTN_B)) delay(30);
-        }
-    }
-
-    // BTN_C: Select nearest aircraft / Deselect
-    if (!digitalRead(BTN_C)) {
-        delay(50);
-        if (!digitalRead(BTN_C)) {
-            if (g_selectedIdx >= 0) {
-                // Already selected → deselect
-                g_selectedIdx = -1;
-                if (g_soundEnabled) tone(BUZZER, 400, 30);
-            } else {
-                // Select nearest
-                ctrlSelectNearest();
-                if (g_selectedIdx >= 0 && g_soundEnabled) {
-                    tone(BUZZER, 784, 40);
-                }
-            }
-            while (!digitalRead(BTN_C)) delay(30);
-        }
-    }
-
-    // BTN_D: Return to OS Launcher
-    if (!digitalRead(BTN_D)) {
-        delay(50);
-        if (!digitalRead(BTN_D)) {
-            renderOLEDOff();
-            ctrlSaveView();
-            osReturnToOS(tft, g_soundEnabled);
-        }
+    if (d.pressed(BTN_D, now)) {
+        renderOLEDOff();
+        ctrlSaveView();
+        osReturnToOS(tft, g_soundEnabled);
     }
 }
 
@@ -197,9 +195,8 @@ void ctrlSelectNearest() {
         }
     }
 
+    g_selectedIdx = bestIdx;
     if (g_aircraftMutex != NULL) {
         xSemaphoreGive(g_aircraftMutex);
     }
-
-    g_selectedIdx = bestIdx;
 }

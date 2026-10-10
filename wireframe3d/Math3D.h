@@ -33,6 +33,16 @@ inline Vec3 v3norm(Vec3 a) {
     return v3mul(a, 1.0f / l);
 }
 
+// Squared distance from the origin to a swept relative-motion segment.
+inline float v3segmentDist2(Vec3 start, Vec3 end) {
+    Vec3 delta = v3sub(end, start);
+    float length2 = v3dot(delta, delta);
+    float t = length2 > 0.000001f ? -v3dot(start, delta) / length2 : 0.0f;
+    t = constrain(t, 0.0f, 1.0f);
+    Vec3 closest = v3add(start, v3mul(delta, t));
+    return v3dot(closest, closest);
+}
+
 // rotateY — Y ekseni etrafinda donus (yaw)
 inline Vec3 rotateY(Vec3 v, float angle) {
     float c = cosf(angle), s = sinf(angle);
@@ -63,7 +73,7 @@ struct Star {
 
 // ============ Object3D — Uzaydaki dusman cismi ============
 struct Object3D {
-    Vec3 pos, vel;
+    Vec3 pos, vel, prevPos;
     float rotAngle, rotSpeed, scale;
     ObjType type;
     int hp;

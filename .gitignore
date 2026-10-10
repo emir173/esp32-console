@@ -37,3 +37,26 @@ map editor/
 # Yerel/gecici (2026-07-08)
 .claude/
 captures/
+
+# Local debugging, compilation caches and backups
+**/.debug/
+**/.debug-build/
+**/build*/
+**/compile-cache/
+*.rar
+*.zip
+*.7z
+
+# Private Flight configuration (never publish)
+flight/flight_secrets.h
+flight/flight_secrets.local.h
+.env
+.env.*
+!.env.example
+
+# Local helper scripts and working notes
+**/system_summary.md
+/TIKLA_KOPYALA.bat
+/derlemeleri_kopyala.py
+/eos_platform_prompt.md
+/dungeon/Dungeon Özellikler.py

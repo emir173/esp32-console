@@ -153,20 +153,22 @@ struct ScreenShake {
 //  EKRAN FLASI (Screen Flash)
 // ============================================================
 struct ScreenFlash {
-    int timer;
+    unsigned long remainingMs = 0;
 
-    void reset() { timer = 0; }
+    void reset() { remainingMs = 0; }
 
-    void trigger() { timer = FLASH_DURATION; }
+    void trigger() { remainingMs = FLASH_DURATION_MS; }
 
-    void update() { if (timer > 0) timer--; }
+    void update(unsigned long elapsedMs) {
+        if (elapsedMs >= remainingMs) remainingMs = 0;
+        else remainingMs -= elapsedMs;
+    }
 
     void draw(TFT_eSprite &canvas) const {
-        if (timer > 0) {
-            for (int y = 0; y < SCR_H; y += 2) {
-                canvas.drawFastHLine(0, y, SCR_W, COL_FLASH_RED);
-            }
-        }
+        if (remainingMs == 0) return;
+        // A 2px border around the playfield keeps the scene and HUD readable.
+        canvas.drawRect(0, HUD_H + 1, SCR_W, SCR_H - HUD_H - 1, COL_FLASH_RED);
+        canvas.drawRect(1, HUD_H + 2, SCR_W - 2, SCR_H - HUD_H - 3, COL_FLASH_RED);
     }
 };
 
@@ -361,7 +363,7 @@ inline void drawMenu(TFT_eSprite &canvas, Starfield &stars, int highScore) {
     char rekorBuf[20];
     snprintf(rekorBuf, sizeof(rekorBuf), "Best: %d", highScore);
     int txtW = strlen(rekorBuf) * 6;
-    canvas.setCursor((160 - txtW) / 2, 140);
+    canvas.setCursor((SCR_W - txtW) / 2, 77);
     canvas.print(rekorBuf);
 }
 

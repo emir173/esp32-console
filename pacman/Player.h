@@ -38,7 +38,7 @@ inline void applyPacmanInput() {
 //  Kare merkezlerinde yon degisimi ve duvar kontrolu yapilir.
 //  Tunel: ekran sol/sag kenarindan gecis (SCR_W wrap).
 // ============================================================
-inline void movePacman(float dt) {
+inline void movePacmanStep(float dt) {
     int cx = ((int)pac.x / TILE) * TILE + HALF_TILE;
     int cy = ((int)pac.y / TILE) * TILE + HALF_TILE;
 
@@ -65,4 +65,13 @@ inline void movePacman(float dt) {
 
     if (pac.x < 0) pac.x += SCR_W;
     if (pac.x >= SCR_W) pac.x -= SCR_W;
+}
+
+inline void movePacman(float dt) {
+    if (pac.speed <= 0 || dt <= 0) return;
+    while (dt > 0) {
+        float step = fminf(dt, MOVE_STEP / pac.speed);
+        movePacmanStep(step);
+        dt -= step;
+    }
 }

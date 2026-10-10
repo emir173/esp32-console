@@ -188,7 +188,6 @@ inline void drawGameOverScreen() {
         { "Gold",  gb, COL_WHITE, COL_HUD_COIN       },
         { "Best",  hb, COL_WHITE, RGB(100, 255, 100) },
     };
-    bool newRecord = (plr.score >= highScore && plr.score > 0);
     osDrawGameOver(canvas, false, rows, 3, newRecord ? "NEW BEST!" : nullptr);
 }
 
@@ -206,7 +205,6 @@ inline void drawWinScreen() {
         { "Gold",  gb, COL_WHITE, COL_HUD_COIN     },
         { "Best",  hb, COL_WHITE, RGB(255, 220, 0) },
     };
-    bool newRecord = (plr.score >= highScore && plr.score > 0);
     osDrawGameOver(canvas, true, rows, 3, newRecord ? "NEW BEST!" : nullptr);
 }
 
